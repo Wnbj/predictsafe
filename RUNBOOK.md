@@ -1,4 +1,4 @@
-# Flight-delay prediction market — POC runbook
+# PredictSafe — POC runbook
 
 End-to-end settlement (real Sepolia log trigger → CRE workflow → real
 `onReport()` write → real `claim()` payout, all verified via on-chain state,

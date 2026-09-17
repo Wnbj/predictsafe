@@ -112,6 +112,13 @@ export const KNOWN_FORWARDERS = [
 
 export const ATTESTATION_LABEL = attestationFor(FORWARDER_ADDRESS);
 
+/**
+ * Where the source lives. One constant because the repository has been renamed
+ * once already, and the two links on the landing page were two separate
+ * strings that happened to agree.
+ */
+export const REPO_URL = "https://github.com/Wnbj/predictsafe";
+
 export const EXPLORER = "https://sepolia.etherscan.io";
 
 export const txUrl = (hash: string) => `${EXPLORER}/tx/${hash}`;

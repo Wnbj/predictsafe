@@ -1,3 +1,4 @@
+import { REPO_URL } from "../lib/config";
 import { useEffect, useMemo, useRef } from "react";
 import { CATEGORIES } from "../lib/categories";
 import { formatToken } from "../lib/format";
@@ -242,7 +243,7 @@ export function Landing({
             </button>
             <a
               className="btn"
-              href="https://github.com/Wnbj/flight-delay-prediction-market"
+              href={REPO_URL}
               target="_blank"
               rel="noreferrer"
               style={{ textDecoration: "none", display: "inline-block" }}
@@ -369,7 +370,7 @@ export function Landing({
       >
         <span style={{ fontSize: 12 }}>© 2026 PredictSafe · POC on Sepolia</span>
         <a
-          href="https://github.com/Wnbj/flight-delay-prediction-market"
+          href={REPO_URL}
           target="_blank"
           rel="noreferrer"
           style={{ fontSize: 12, color: "inherit", textDecoration: "none" }}
