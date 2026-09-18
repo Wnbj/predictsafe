@@ -790,7 +790,16 @@ export async function readLpEvents(): Promise<LpEvent[]> {
  * missing the AMM and then the reserve contract, both silently.
  */
 export async function readSettledEvents(): Promise<SettledEvent[]> {
-  const { logs } = await readSettlementLogs({ families: ["settled"] });
+  // Both families, because the forwarder that delivered a settlement is only
+  // named in the `ReportProcessed` log — which the receiver emits nothing
+  // about, and which sits in the same transaction as the `Settled` event.
+  const { logs } = await readSettlementLogs({ families: ["settled", "report"] });
+
+  const forwarderByTx = new Map<string, `0x${string}`>();
+  for (const l of logs) {
+    if (l.kind === "report") forwarderByTx.set(l.txHash.toLowerCase(), l.forwarder);
+  }
+
   return logs.flatMap((l) =>
     l.kind === "settled"
       ? [
@@ -801,6 +810,9 @@ export async function readSettledEvents(): Promise<SettledEvent[]> {
             evidenceHash: l.evidenceHash,
             blockNumber: l.blockNumber,
             txHash: l.txHash,
+            ...(forwarderByTx.has(l.txHash.toLowerCase())
+              ? { forwarder: forwarderByTx.get(l.txHash.toLowerCase())! }
+              : {}),
           },
         ]
       : [],

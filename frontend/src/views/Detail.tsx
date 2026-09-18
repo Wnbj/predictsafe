@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { category } from "../lib/categories";
-import { addressUrl, ATTESTATION_LABEL, txUrl } from "../lib/config";
+import { addressUrl, ATTESTATION_LABEL, txUrl, attestationFor} from "../lib/config";
 import { formatDepartureDate, formatMarketValue, formatPercent, formatTimestamp, formatToken, outcomeLabel, shortAddress, statusLabel } from "../lib/format";
 import {
   impliedYesPercent,
@@ -243,8 +243,15 @@ export function Detail({
                 * places claiming different things about the same event is how
                 * one of them quietly stays wrong.
                 */}
+              {/*
+                * From the forwarder that delivered THIS settlement, not from
+                * whatever the app is configured to watch. The global label
+                * described a market the DON had just settled as a local
+                * simulation, because config still named the mock — the same
+                * mistake the flag before it made, one layer further in.
+                */}
               <div className="muted" style={{ fontSize: 11 }}>
-                {ATTESTATION_LABEL}
+                {settlement.forwarder ? attestationFor(settlement.forwarder) : ATTESTATION_LABEL}
               </div>
               <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
                 <Stat label="Outcome" value={outcomeLabel(settlement.outcome)} />

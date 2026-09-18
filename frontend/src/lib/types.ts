@@ -244,6 +244,18 @@ export interface SettledEvent {
    */
   blockNumber: bigint;
   txHash: `0x${string}`;
+  /**
+   * The forwarder that delivered the report, taken from the `ReportProcessed`
+   * log in the same transaction. Absent when that log could not be read — the
+   * RPC drops logs silently, so a missing forwarder means "unknown", never
+   * "the usual one".
+   *
+   * It is here because how a settlement was attested is a property of THAT
+   * settlement, not of whatever the app is currently configured to watch. A
+   * market settled by the DON was described as a local simulation for as long
+   * as this was read from config instead.
+   */
+  forwarder?: `0x${string}`;
 }
 
 /** A connected wallet's stake in one market, with settlement applied. */
