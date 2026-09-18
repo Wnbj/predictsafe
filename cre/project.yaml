@@ -35,10 +35,22 @@ staging-settings:
   rpcs:
     - chain-name: ethereum-testnet-sepolia
       url: https://ethereum-sepolia-rpc.publicnode.com
+    # Read-only, and not where any workflow runs. The Vault DON's gateway
+    # responses are verified against mainnet: without this entry the CLI cannot
+    # check the encryption key or the DON's signatures for itself and has to
+    # take the gateway's word. Verified 2026-09-18: eth_chainId returns 0x1.
+    - chain-name: ethereum-mainnet
+      url: https://ethereum-rpc.publicnode.com
 
 # ==========================================================================
 production-settings:
   rpcs:
     - chain-name: ethereum-testnet-sepolia
       url: https://ethereum-sepolia-rpc.publicnode.com
+    # Read-only, and not where any workflow runs. The Vault DON's gateway
+    # responses are verified against mainnet: without this entry the CLI cannot
+    # check the encryption key or the DON's signatures for itself and has to
+    # take the gateway's word. Verified 2026-09-18: eth_chainId returns 0x1.
+    - chain-name: ethereum-mainnet
+      url: https://ethereum-rpc.publicnode.com
 
