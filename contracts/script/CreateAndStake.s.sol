@@ -23,6 +23,17 @@ import {MockUSDC} from "../src/MockUSDC.sol";
  *   NO_PK        - private key staking NO  (needs Sepolia ETH for gas)
  *   THRESHOLD    - delay threshold in minutes (30 => YES against a 42m mock delay)
  *
+ * Optional env, defaulting to the mock flight this script has always used:
+ *   FLIGHT_IATA     - flight number, e.g. BA286
+ *   DEPARTURE_DATE  - YYYYMMDD as a number, e.g. 20260820
+ *   QUESTION        - the market's question text
+ *
+ * The flight used to be hardcoded, which made this script good for exercising
+ * the settlement path and useless for asking about a real aircraft. A flight
+ * that has ALREADY landed is the fastest honest test: AeroDataBox still
+ * answered for a flight 29 days old on 2026-09-18, so a market created now
+ * about a past flight settles in one run rather than waiting for a departure.
+ *
  * Run:
  *   forge script script/CreateAndStake.s.sol:CreateAndStake --rpc-url $SEPOLIA_RPC_URL --broadcast
  */
@@ -42,8 +53,13 @@ contract CreateAndStake is Script {
 
         // --- create + stake YES ---
         vm.startBroadcast(yesPk);
+        string memory flightIata = vm.envOr("FLIGHT_IATA", string("AA100"));
+        uint32 departureDate = uint32(vm.envOr("DEPARTURE_DATE", uint256(20240115)));
+        string memory question =
+            vm.envOr("QUESTION", string("Will AA100 arrive 30m+ late?"));
+
         uint256 marketId = market.newMarket(
-            "Will AA100 arrive 30m+ late?", "AA100", 20240115, threshold, closeTime, settleAfter
+            question, flightIata, departureDate, threshold, closeTime, settleAfter
         );
         token.mint(vm.addr(yesPk), YES_AMOUNT);
         token.approve(address(market), YES_AMOUNT);
@@ -63,6 +79,8 @@ contract CreateAndStake is Script {
         vm.stopBroadcast();
 
         console2.log("MARKET_ID    ", marketId);
+        console2.log("FLIGHT       ", flightIata);
+        console2.log("DEPARTURE    ", departureDate);
         console2.log("THRESHOLD    ", threshold);
         console2.log("YES staker   ", vm.addr(yesPk));
         console2.log("NO  staker   ", vm.addr(noPk));

@@ -154,7 +154,19 @@ doc.aerodatabox.com, not guessed — see the comment above `fetchFlight` in
 1. Sign up at RapidAPI and subscribe to AeroDataBox
    (https://rapidapi.com/aedbx-aedbx/api/aerodatabox) — free tier exists.
 2. `cp cre/settlement/config.staging.example.json cre/settlement/config.staging.json`
-3. Fill in `apiKey` with your RapidAPI key.
+3. Put the key in the **Vault DON**, not in the config:
+   - add `CRE_SECRET_AERODATABOX_KEY=<key>` to `cre/.env` (gitignored)
+   - `cre secrets create ./secrets.yaml --secrets-auth browser --target staging-settings`
+     from `cre/`, in a real terminal — the browser sign-in needs a TTY
+   - leave `apiKey` empty; `apiKeySecretId` is already `AERODATABOX_API_KEY`
+
+   `--secrets-auth browser` matters: the default `onchain` mode reaches for the
+   Ethereum mainnet registry, which this project does not use. Verified working
+   2026-09-18 — the settlement of flight market 9 resolved its key this way.
+
+   Filling `apiKey` instead still works, and is what the fallback in
+   `resolveApiKey` is for, but config is handed to the DON: every node operator
+   running the workflow can read whatever is in it.
 
 `config.staging.json` is **gitignored**, not committed — same treatment as
 `.env`. Config JSON values are passed through to the workflow verbatim (no
