@@ -32,16 +32,43 @@ set -uo pipefail
 TARGET="${1:-staging}"
 RPC="${SEPOLIA_RPC_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
 
-# The address that becomes msg.sender inside onReport under
-# `cre workflow simulate --broadcast`. Traced from a failed delivery, not read
-# off a flag description.
-EXPECT_FORWARDER="0x15fC6ae953E024d975e77382eEeC56A9101f9F88"
-
-# The placeholder owner the CLI stamps when no owner key is linked.
-EXPECT_AUTHOR="0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa"
+# Who delivers a report differs per target, and a receiver holds exactly one
+# forwarder, so the two paths cannot both work against the same contract.
+# Both addresses come from `cre workflow supported-chains`, whose two columns
+# are FORWARDER ADDRESS and MOCK FORWARDER ADDRESS — read them there rather
+# than from any table, including this one.
+case "$TARGET" in
+  production)
+    # A deployed workflow running on the DON.
+    EXPECT_FORWARDER="0xF8344CFd5c43616a4366C34E3EEE75af79a74482"
+    # The owner the private registry assigns; printed as `Owner:` by
+    # `cre workflow deploy` and by `cre workflow list`. Account-derived, and
+    # NOT the wallet that owns the contracts.
+    EXPECT_AUTHOR="0x10C71fFbcB68B0dA3721F15e89fB7Eb75D341379"
+    ;;
+  *)
+    # `cre workflow simulate --broadcast`, from this machine.
+    EXPECT_FORWARDER="0x15fC6ae953E024d975e77382eEeC56A9101f9F88"
+    # The placeholder the CLI stamps when no owner key is linked.
+    EXPECT_AUTHOR="0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa"
+    ;;
+esac
 
 CONFIG="$(dirname "$0")/settlement/config.${TARGET}.json"
-WORKFLOW_NAME="flight-settlement-${TARGET}"
+
+# Taken from workflow.yaml rather than assembled from the target name, which
+# was only ever right by coincidence: the production workflow is called
+# `predictsafe-settlement`, not `flight-settlement-production`.
+WORKFLOW_NAME=$(python3 - "$(dirname "$0")/settlement/workflow.yaml" "${TARGET}-settings" <<'PYEOF'
+import re, sys
+text = open(sys.argv[1]).read()
+block = text.split(sys.argv[2] + ":", 1)
+if len(block) < 2:
+    sys.exit("no target " + sys.argv[2] + " in workflow.yaml")
+m = re.search(r'workflow-name:\s*"([^"]+)"', block[1])
+print(m.group(1) if m else sys.exit("no workflow-name under " + sys.argv[2]))
+PYEOF
+) || exit 2
 
 command -v cast >/dev/null || { echo "cast not on PATH — export \$HOME/.foundry/bin"; exit 2; }
 [ -f "$CONFIG" ] || { echo "no config at $CONFIG"; exit 2; }
@@ -75,7 +102,10 @@ check() { # label, actual, expected
 while IFS='=' read -r label address; do
   [ -z "$address" ] && continue
   [ "$address" = "null" ] && continue
-  [ "$address" = "" ] && continue
+  # The flight handler registers unconditionally, so a config that does not
+  # want it points it at the zero address. That is a silenced handler, not a
+  # contract, and it has no values to check.
+  case "$address" in 0x0000000000000000000000000000000000000000) continue ;; esac
   echo "  $label  $address"
   check "workflow name" "$(cast call "$address" 'getExpectedWorkflowName()(bytes10)' --rpc-url "$RPC" 2>&1)" "$expected_name"
   check "author"        "$(cast call "$address" 'getExpectedAuthor()(address)'      --rpc-url "$RPC" 2>&1)" "$EXPECT_AUTHOR"

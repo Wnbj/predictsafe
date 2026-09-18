@@ -1,3 +1,15 @@
 {
-  "schedule": "*/30 * * * * *"
+  "flightContractAddress": "0x0000000000000000000000000000000000000000",
+  "chainSelectorName": "ethereum-testnet-sepolia",
+  "apiUrl": "https://aerodatabox.p.rapidapi.com",
+  "apiKey": "",
+  "apiKeySecretId": "AERODATABOX_API_KEY",
+  "apiKeySecretNamespace": "main",
+  "gasLimit": "1000000",
+  "secondaryUrl": "",
+  "cryptoContractAddress": "0x8DA11eb17D5F3f4427aA3017E95e50b132A210be",
+  "stockContractAddress": "",
+  "reserveContractAddress": "",
+  "ammContractAddress": "",
+  "sweepSchedule": ""
 }

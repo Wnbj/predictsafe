@@ -28,7 +28,7 @@ staging-settings:
 # ==========================================================================
 production-settings:
   user-workflow:
-    workflow-name: "flight-settlement-production"
+    workflow-name: "predictsafe-settlement"
     deployment-registry: "private"
   workflow-artifacts:
     workflow-path: "./main.ts"

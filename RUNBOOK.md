@@ -48,17 +48,28 @@ forge script script/Deploy.s.sol:Deploy --rpc-url https://ethereum-sepolia-rpc.p
 **`FORWARDER` and `WORKFLOW_AUTHOR` are not obvious — both were found by tracing
 a failed delivery, not by reading a flag description:**
 
-- `FORWARDER` must be `0x15fC6ae953E024d975e77382eEeC56A9101f9F88` — the actual
-  `MockKeystoneForwarder` contract (verified on Sourcify) that
-  `cre workflow simulate --broadcast` calls `report()`/`route()` on, which becomes
-  `msg.sender` inside `onReport()`. This is **different** from the address
-  `cre workflow supported-chains` prints as "MOCK FORWARDER" for
-  `ethereum-testnet-sepolia` (`0xF8344CFd5c43616a4366C34E3EEE75af79a74482`) — that
-  one is not the caller in the local `--broadcast` path. Using it makes every
-  report revert with `InvalidSender`, silently: the outer CLI tx still succeeds
-  and logs "Settled", because `MockKeystoneForwarder.route()` swallows the
-  receiver-call failure into a `ReportProcessed(..., success)` event and never
-  reverts the outer transaction.
+- `FORWARDER` depends on **who will deliver the report**, and the two are not
+  interchangeable. `cre workflow supported-chains` prints both for
+  `ethereum-testnet-sepolia`, in two columns:
+
+  | column | address | delivers when |
+  |---|---|---|
+  | `FORWARDER ADDRESS` | `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` | a deployed workflow runs on the DON |
+  | `MOCK FORWARDER ADDRESS` | `0x15fC6ae953E024d975e77382eEeC56A9101f9F88` | `cre workflow simulate --broadcast` runs locally |
+
+  Use the mock while settling from your own machine, the real one once the
+  workflow is deployed and active. A receiver holds exactly one, so the two
+  paths cannot both work against the same contract at the same time.
+
+  Getting it wrong is the quietest failure in this system: every report reverts
+  with `InvalidSender`, but the outer CLI transaction still succeeds and logs
+  "Settled", because `route()` swallows the receiver-call failure into a
+  `ReportProcessed(..., success=false)` event rather than reverting.
+
+  This entry previously claimed the CLI printed `0xF8344CFd…` under "MOCK
+  FORWARDER". Re-read from the CLI on 2026-09-18, the columns are as above —
+  so check `supported-chains` yourself rather than trusting either this note or
+  the skill's tables, which have also been wrong here.
 - `WORKFLOW_AUTHOR` must be `0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa` — a fixed
   placeholder the CLI uses for the metadata's `workflowOwner` field when there is
   no linked owner key (`cre account list-key` → "No linked owners found"). Swap

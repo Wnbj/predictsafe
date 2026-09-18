@@ -38,3 +38,7 @@ skills-lock.json
 # commit history should not have to carry. What the system IS lives in
 # README.md; how to operate it lives in RUNBOOK.md.
 CLAUDE.md
+
+# Compiled workflow, written by `cre workflow deploy` next to the source it
+# was built from. Regenerated on every deploy and uploaded to CRE storage.
+cre/**/binary.wasm.br.b64
