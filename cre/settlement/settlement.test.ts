@@ -145,6 +145,39 @@ describe("reconcileVenuePrices — crypto", () => {
   test("refuses to invent an answer from no data", () => {
     expect(() => reconcileVenuePrices([], [], BTC_STRIKE, "BTC")).toThrow()
   })
+
+  /**
+   * A venue that cannot answer is not a venue that disagrees. Crypto market 14
+   * voided on the DON for exactly this: Kraken serves about twelve hours of
+   * one-minute candles and the market was settled 38 hours after expiry, so
+   * the agreement between Coinbase and Bitstamp was thrown away with it.
+   */
+  test("settles on two venues when the third cannot answer", () => {
+    const prices = [6_302_301_000_000, 6_302_026_000_000];
+    expect(reconcileVenuePrices(["coinbase", "bitstamp"], prices, BTC_STRIKE, "BTC")).toBe(
+      6_302_301_000_000,
+    )
+  })
+
+  /** One venue is a single observer, which is the thing this rule exists to refuse. */
+  test("refuses a single venue, however confident it sounds", () => {
+    expect(() =>
+      reconcileVenuePrices(["coinbase"], [6_302_301_000_000], BTC_STRIKE, "BTC"),
+    ).toThrow(/need 2/)
+  })
+
+  /** Tolerating absence must not tolerate disagreement — the property survives. */
+  test("still voids when the two that answered straddle the strike", () => {
+    const strike = 188_200_000_000
+    expect(() =>
+      reconcileVenuePrices(["coinbase", "kraken"], [188_201_000_000, 188_173_000_000], strike, "ETH"),
+    ).toThrow(/disagree/)
+  })
+
+  /** The error should name who was missing, not merely how many. */
+  test("names the venues that did answer", () => {
+    expect(() => reconcileVenuePrices(["bitstamp"], [1], BTC_STRIKE, "BTC")).toThrow(/bitstamp/)
+  })
 })
 
 describe("checkRoundUsable — feed staleness", () => {

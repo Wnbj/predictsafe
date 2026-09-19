@@ -769,13 +769,34 @@ export const toScaledPrice = (price: number): number => Math.round(price * PRICE
  * answer neither venue gave. Pure and exported so the rule can be tested
  * without three HTTP calls.
  */
+/**
+ * How many venues must actually answer before a price is trustworthy.
+ *
+ * Two, not three. A venue that CANNOT answer is not a venue that disagrees,
+ * and the original code could not tell the difference — one `throw` covered
+ * both. That cost a real market: crypto #14 voided on the DON because Kraken
+ * serves only about twelve hours of one-minute candles (measured: 721 of them)
+ * and the market was settled 38 hours after expiry. Coinbase and Bitstamp
+ * could both answer; their agreement was discarded along with Kraken's
+ * silence.
+ *
+ * Two independent venues agreeing on which side of the strike a price fell is
+ * not a guess. One is, which is why the floor is not lower.
+ */
+const MIN_VENUES = 2
+
 export const reconcileVenuePrices = (
   names: string[],
   prices: number[],
   strikePrice: number,
   symbol: string,
 ): number => {
-  if (prices.length === 0) throw new Error(`No venue prices for ${symbol}`)
+  if (prices.length < MIN_VENUES) {
+    throw new Error(
+      `Only ${prices.length} venue(s) priced ${symbol}, need ${MIN_VENUES}` +
+        (names.length > 0 ? ` (answered: ${names.join(", ")})` : ""),
+    )
+  }
 
   const outcomes = prices.map((p) => (p >= strikePrice ? OUTCOME_YES : OUTCOME_NO))
   if (!outcomes.every((o) => o === outcomes[0])) {
@@ -802,13 +823,38 @@ const fetchCryptoPrice = (
     { name: "kraken", read: () => readKrakenPrice(sendRequester, symbol, minuteStart) },
   ]
 
-  const prices = venues.map((v) => toScaledPrice(v.read()))
-  const medianPrice = reconcileVenuePrices(
-    venues.map((v) => v.name),
-    prices,
-    strikePrice,
-    symbol,
-  )
+  /*
+   * Collected rather than mapped, so that one venue being unable to answer
+   * does not discard the ones that could. A failure is recorded and carried
+   * into the error message if too few are left — silence that goes unexplained
+   * is how a void looks identical to a bug.
+   */
+  const answered: string[] = []
+  const prices: number[] = []
+  const silent: string[] = []
+  for (const v of venues) {
+    try {
+      prices.push(toScaledPrice(v.read()))
+      answered.push(v.name)
+    } catch (err) {
+      silent.push(`${v.name}: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  /*
+   * Thrown here rather than left to `reconcileVenuePrices`, because only this
+   * scope knows WHY a venue is missing. "Only 1 venue priced BTC" sends the
+   * next reader to the reconciliation rule; "kraken: has no candle for minute
+   * X" sends them to the venue's history window, which is where the problem
+   * actually was.
+   */
+  if (prices.length < MIN_VENUES) {
+    throw new Error(
+      `Only ${prices.length} of ${venues.length} venues priced ${symbol} at minute ` +
+        `${minuteStart}; need ${MIN_VENUES}. Silent — ${silent.join(" | ")}`,
+    )
+  }
+
+  const medianPrice = reconcileVenuePrices(answered, prices, strikePrice, symbol)
 
   return { delayMinutes: medianPrice, status: "priced", fetchedAt: 0 }
 }
