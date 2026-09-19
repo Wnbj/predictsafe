@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { loadCache, saveCache } from "../lib/logCache";
 import {
   mergeLogs,
   readSettlementLogs,
@@ -48,9 +49,19 @@ export function useSettlementFeed(markets: Market[], lpEvents: LpEvent[]): Settl
   const [loading, setLoading] = useState(true);
   const [times, setTimes] = useState<ReadonlyMap<bigint, number>>(new Map());
 
-  /** Held in a ref, not state: reading it must not re-arm the interval. */
-  const store = useRef(new Map<string, SettlementLog>());
-  const cursor = useRef<bigint | null>(null);
+  /**
+   * Held in a ref, not state: reading it must not re-arm the interval.
+   *
+   * Seeded from the previous visit. The cursor already skips ahead within a
+   * session; without this it started from the deploy block on every reload,
+   * which is a quarter of a million blocks of rescanning before anything
+   * renders. See `logCache`.
+   */
+  const restored = useRef(loadCache());
+  const store = useRef(
+    mergeLogs(new Map<string, SettlementLog>(), restored.current?.logs ?? []),
+  );
+  const cursor = useRef<bigint | null>(restored.current?.cursor ?? null);
   const busy = useRef(false);
 
   const poll = useCallback(async () => {
@@ -79,6 +90,10 @@ export function useSettlementFeed(markets: Market[], lpEvents: LpEvent[]): Settl
         const maxSeen = next.reduce((m, l) => (l.blockNumber > m ? l.blockNumber : m), scan.head);
         const back = maxSeen > OVERLAP ? maxSeen - OVERLAP : 0n;
         cursor.current = back;
+        // Persisted on the same condition as the cursor, and never otherwise:
+        // storing a cursor past a family that failed would lose those logs for
+        // every future visit rather than only this one.
+        saveCache(back, next);
       }
 
       // Only blocks that will actually be rendered, newest first, capped.

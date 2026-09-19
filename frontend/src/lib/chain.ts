@@ -631,6 +631,37 @@ const LIQUIDITY_WITHDRAWN_EVENT = parseAbiItem(
  * rejects the range as extending beyond its head. Letting the serving node
  * decide its own upper bound removes the mismatch entirely.
  */
+/**
+ * One queue for every log range this app asks for, with a gap between them.
+ *
+ * The scans are issued concurrently — four log families, several contracts
+ * each, every one walking the chain in chunks — so a cold load fired about 190
+ * `eth_getLogs` requests at once and the public node answered with HTTP 429
+ * until the page rendered nothing at all. Measured 2026-09-19.
+ *
+ * Serialising them costs roughly a chunk's latency plus this gap per request,
+ * which is slow exactly once: the feed caches what it read, so later visits ask
+ * only for the tail. A burst that gets refused is not faster than a trickle
+ * that succeeds.
+ */
+const RPC_GAP_MS = 120;
+let rpcQueue: Promise<unknown> = Promise.resolve();
+
+function paced<T>(fn: () => Promise<T>): Promise<T> {
+  const next = rpcQueue.then(async () => {
+    const result = await fn();
+    await new Promise((r) => setTimeout(r, RPC_GAP_MS));
+    return result;
+  });
+  // The queue must survive a rejection, or one failed range stops every scan
+  // that follows it for the life of the page.
+  rpcQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
 export async function logsInChunks<T>(
   fetchRange: (from: bigint, to: bigint | "latest") => Promise<T[]>,
   /**
@@ -650,7 +681,7 @@ export async function logsInChunks<T>(
   for (let from = start; from <= latest; from += STEP) {
     const end = from + STEP - 1n;
     const reachesHead = end >= latest;
-    out.push(...(await fetchRange(from, reachesHead ? "latest" : end)));
+    out.push(...(await paced(() => fetchRange(from, reachesHead ? "latest" : end))));
     if (reachesHead) break;
   }
   return out;
