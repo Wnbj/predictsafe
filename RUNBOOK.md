@@ -759,6 +759,63 @@ autonomy needs `_processReport` to accept a report for any market past
 and adds nothing to authorisation, which is already forwarder + author +
 workflow name.
 
+## Why flights are not on the DON
+
+Every other family migrated on 2026-09-20. Flights did not, and the reason is
+not the secret — it is arithmetic.
+
+**A DON is ten nodes, and every one of them makes the HTTP call.** That is what
+consensus over an off-chain read means. For the crypto path it costs nothing,
+because the load is spread over three public venues that tolerate it and only
+two of the three need to answer. For flights there is one provider on a free
+RapidAPI tier, and ten simultaneous requests are nine too many.
+
+Measured 2026-09-20, a single settlement — not a sweep:
+
+```
+Errors received: [HTTP 429 for BA286, HTTP 429 for BA286, ... ]   (nine of them)
+ConsensusFailed: received 9 errors which is >= f+1 (4)
+Market 11 -> outcome=3 delay=0m status=unavailable
+```
+
+One node got an answer. Nine were refused, consensus failed, and the market
+voided. **This is a per-settlement problem, so `sweepSchedule` was never the
+thing to worry about** — the sweep only multiplies something that already does
+not work.
+
+`readAeroDataBox` has no retry: `sendRequest(...).result()` and a non-200
+throws. Whether a retry with per-node jitter would clear a burst limit is
+untested, and so is whether the SDK offers any way to delay inside a node
+function at all. The other lever is `secondaryUrl`, which the config already
+carries and which is empty — a second independent provider halves the load on
+each.
+
+### Proving a handler on the DON without the one-way step
+
+The migration itself is irreversible per contract: a receiver holds ONE
+forwarder, so the moment it trusts the production one, `simulate --broadcast`
+can no longer reach it. The finding above was made WITHOUT taking that step,
+and the sequence is worth reusing for any future handler:
+
+1. Put the contract's address in the production config and redeploy. The
+   workflow starts watching it; the contract still trusts the mock forwarder.
+2. Create a market and request settlement. The DON runs the handler end to
+   end — secrets, HTTP, consensus, report, chain write.
+3. The receiver refuses, because the forwarder is the wrong one. The
+   transaction still succeeds and carries exactly one log:
+   `ReportProcessed(result = false)` from `0xF8344CFd…`, and NO `Settled`.
+   The market's status does not move.
+4. Read `cre execution logs <id>`. Everything up to the refusal is real.
+
+Cost: one throwaway market and one redeploy. It turns "flip it and find out"
+into a measurement.
+
+**Allow several minutes between a redeploy and the first trigger.** A request
+34 seconds after a deploy produced no execution at all — not a failure, no
+record anywhere. The same request 6 minutes later fired in 4 seconds. A log
+trigger that was not yet registered when the log was mined misses it
+permanently; waiting afterwards does not recover it.
+
 ## Secrets: the API key is currently in the clear
 
 `config.staging.json` carries the RapidAPI key as plaintext. That file is
