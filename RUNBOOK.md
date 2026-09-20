@@ -517,6 +517,46 @@ carries both. It also voids on a round older than the market's own
 `maxStaleness`, which is per market because a daily feed and an hourly one
 cannot share a threshold.
 
+### The trading window is bounded by the feed's publication rate
+
+A stock settlement makes TWO round lookups — the round in force at expiry, and
+the round in force at the close — and walks backwards one round per read from
+the latest one. Both walks share a single budget of **15 chain reads per
+execution** (`ChainRead.CallLimit`), and three of those are spent before the
+walking starts.
+
+So the real limit is not a duration. It is **how many feed rounds separate the
+latest one from `closeTime`**, and that depends entirely on the feed:
+
+| feed | publishes about | usable close-to-expiry gap |
+|---|---|---|
+| BTC/USD, Sepolia | once an hour | ~12 hours |
+| CSPX, Sepolia | once a day | ~12 days |
+
+Measured 2026-09-20: a BTC market with `closeTime` 24 hours before expiry
+voided on every one of the ten DON nodes with
+
+```
+Resolution failed, voiding stock market 3: Error: Out of chain reads (limit 15 per execution)
+```
+
+**The void carries no reason on chain.** `observedValue` is 0 and the status is
+Void, exactly as for a genuine "the price did not move" refusal — the reason
+lives only in `cre execution logs <id>`, per node. So a market that is too long
+for its feed looks identical to one that was already decided.
+
+Before creating a long-dated equity market, read the feed's cadence rather than
+assuming it:
+
+```bash
+cast call $FEED 'latestRoundData()(uint80,int256,uint256,uint256,uint80)' --rpc-url $SEPOLIA_RPC_URL
+# then walk back a few ids and diff updatedAt — note the ids are phase-encoded
+# uint80, so do the arithmetic in python, not in the shell.
+```
+
+Reserve markets are exempt: they carry no `closeTime` and make one lookup, not
+two.
+
 ### Feeds are allowlisted
 
 `newMarket` is permissionless. If the feed address came from the caller, anyone
