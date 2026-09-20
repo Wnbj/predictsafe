@@ -6,25 +6,26 @@ import {
   RESERVE_MARKET_ADDRESS,
   STOCK_MARKET_ADDRESS,
 } from "./config";
-import type { SettlementLog } from "./settlementEvents";
+import type { RawLog } from "./logScan";
 
 /**
  * What a previous visit already read, so a reload does not read it again.
  *
- * The feed already scans incrementally WITHIN a session: it keeps a cursor and
- * only asks for blocks past it. What it could not do is remember that across a
+ * `logScan` scans incrementally WITHIN a session: it keeps a cursor and only
+ * asks for blocks past it. What it could not do is remember that across a
  * reload, so every page load rescanned the whole chain from the deploy block —
- * measured 2026-09-19 as 249,093 blocks and 191 RPC requests before a single
- * number appeared on screen. The public node answered that with HTTP 429 and
- * the page rendered nothing at all.
+ * 256,812 blocks as of 2026-09-20, against an endpoint that answers HTTP 429
+ * long before that finishes.
  *
- * That is also why a paid endpoint did not fix it. Alchemy's free tier caps
- * `eth_getLogs` at a TEN block range, which is worse than the public node's
- * 10,000 for this shape of work. The binding constraint was never the request
- * rate; it was asking for a quarter of a million blocks in the first place.
+ * UNDECODED logs are stored, not the decoded families. Two reasons. A decoded
+ * shape is this app's opinion about the chain and changes whenever a decoder
+ * does, which would silently serve last week's interpretation from cache; the
+ * raw log is what the node said. And the decoders each want a different slice
+ * of the same logs, so one cache under them serves all of them at once.
  */
 
-const VERSION = 1;
+/** Bumped whenever the stored shape changes. v2 holds raw logs, not decoded. */
+const VERSION = 2;
 
 /**
  * Keyed by the contracts being watched, so pointing the app at a redeployed
@@ -46,9 +47,10 @@ const KEY = [
 ].join(":");
 
 export interface CachedScan {
-  /** The cursor to resume from. Already includes the feed's overlap. */
+  /** The cursor to resume from. Already includes the scan's overlap. */
   cursor: bigint;
-  logs: SettlementLog[];
+  receiver: RawLog[];
+  forwarder: RawLog[];
 }
 
 /** `JSON.stringify` cannot carry a bigint, and every block number is one. */
@@ -68,7 +70,8 @@ export function loadCache(): CachedScan | null {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw, reviver) as CachedScan;
-    if (typeof parsed?.cursor !== "bigint" || !Array.isArray(parsed.logs)) return null;
+    if (typeof parsed?.cursor !== "bigint") return null;
+    if (!Array.isArray(parsed.receiver) || !Array.isArray(parsed.forwarder)) return null;
     // A cursor before the deploy block saves nothing and hides a bug.
     if (parsed.cursor < DEPLOY_BLOCK) return null;
     return parsed;
@@ -77,11 +80,11 @@ export function loadCache(): CachedScan | null {
   }
 }
 
-export function saveCache(cursor: bigint, logs: SettlementLog[]): void {
+export function saveCache(cursor: bigint, receiver: RawLog[], forwarder: RawLog[]): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ cursor, logs }, replacer));
+    localStorage.setItem(KEY, JSON.stringify({ cursor, receiver, forwarder }, replacer));
   } catch {
-    // Quota, private mode, or storage disabled. The feed keeps working from
+    // Quota, private mode, or storage disabled. The scan keeps working from
     // the network; it simply starts from the deploy block next time.
   }
 }

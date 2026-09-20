@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadCache, saveCache } from "../lib/logCache";
 import {
-  mergeLogs,
   readSettlementLogs,
   type LogFamily,
   type SettlementLog,
@@ -20,18 +18,6 @@ import type { LpEvent, Market } from "../lib/types";
 
 const POLL_MS = 6_000;
 
-/**
- * How far back each incremental read reaches.
- *
- * `logsInChunks` hands its upper bound to the serving node rather than naming a
- * block, deliberately — these RPCs sit behind a load balancer and a node that
- * is behind will reject a range that runs past its own head. So we cannot know
- * how far a scan actually got, and the cursor is a hint. This overlap is what
- * absorbs the error, and it has to be generous enough to cover a node that lags
- * by a few blocks, because such a node answers short rather than failing.
- */
-const OVERLAP = 16n;
-
 export interface SettlementFeed extends Pipelines {
   /** Head as of the last completed read. */
   head: bigint;
@@ -49,55 +35,26 @@ export function useSettlementFeed(markets: Market[], lpEvents: LpEvent[]): Settl
   const [loading, setLoading] = useState(true);
   const [times, setTimes] = useState<ReadonlyMap<bigint, number>>(new Map());
 
-  /**
-   * Held in a ref, not state: reading it must not re-arm the interval.
-   *
-   * Seeded from the previous visit. The cursor already skips ahead within a
-   * session; without this it started from the deploy block on every reload,
-   * which is a quarter of a million blocks of rescanning before anything
-   * renders. See `logCache`.
-   */
-  const restored = useRef(loadCache());
-  const store = useRef(
-    mergeLogs(new Map<string, SettlementLog>(), restored.current?.logs ?? []),
-  );
-  const cursor = useRef<bigint | null>(restored.current?.cursor ?? null);
+  /** One read at a time: a slow response must not stack up behind the timer. */
   const busy = useRef(false);
 
   const poll = useCallback(async () => {
-    // One read at a time. A slow response must not stack up behind the timer.
     if (busy.current) return;
     busy.current = true;
     try {
-      const from = cursor.current;
-      const scan = await readSettlementLogs(from === null ? {} : { from });
+      // `syncLogs` underneath owns the cursor, the union and the cache, and
+      // shares one read with every other consumer on the page. This hook used
+      // to own all three itself, which is how four hooks ended up starting
+      // four separate walks of the chain.
+      const scan = await readSettlementLogs();
 
-      // Union — see `mergeLogs` for the measurement that rules out replacing
-      // the window, which would let a lagging node erase a settlement from the
-      // screen and put the market back to "waiting".
-      mergeLogs(store.current, scan.logs);
-
-      const next = [...store.current.values()];
-      setLogs(next);
+      setLogs(scan.logs);
       setHead(scan.head);
       setFailures(scan.failures);
       setLastPollAt(Date.now());
 
-      // The cursor may only advance when nothing failed. A family that errored
-      // has not been read for this window, and moving past it would lose those
-      // logs permanently rather than retrying them.
-      if (scan.failures.length === 0) {
-        const maxSeen = next.reduce((m, l) => (l.blockNumber > m ? l.blockNumber : m), scan.head);
-        const back = maxSeen > OVERLAP ? maxSeen - OVERLAP : 0n;
-        cursor.current = back;
-        // Persisted on the same condition as the cursor, and never otherwise:
-        // storing a cursor past a family that failed would lose those logs for
-        // every future visit rather than only this one.
-        saveCache(back, next);
-      }
-
-      // Only blocks that will actually be rendered, newest first, capped.
-      const wanted = next.flatMap((l) =>
+      // Only blocks that will actually be rendered.
+      const wanted = scan.logs.flatMap((l) =>
         l.kind === "requested" || l.kind === "report" || l.kind === "settled"
           ? [l.blockNumber]
           : [],

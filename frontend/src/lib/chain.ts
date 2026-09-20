@@ -4,15 +4,16 @@ import {
   custom,
   http,
   parseAbiItem,
+  parseEventLogs,
   type Address,
 } from "viem";
 import { getActiveProvider } from "./providers";
 import { readSettlementLogs } from "./settlementEvents";
+import { categoryOf, syncLogs } from "./logScan";
 import {
   AMM_MARKET_ADDRESS,
   chain,
   CRYPTO_MARKET_ADDRESS,
-  DEPLOY_BLOCK,
   FLIGHT_MARKET_ADDRESS,
   RESERVE_MARKET_ADDRESS,
   RPC_URL,
@@ -716,115 +717,52 @@ const LIQUIDITY_WITHDRAWN_EVENT = parseAbiItem(
   "event LiquidityWithdrawn(uint256 indexed marketId, address indexed provider, uint256 lpShares, uint256 amount)",
 );
 
-/**
- * Public RPCs cap getLogs spans, so walk the range in chunks.
- *
- * The final chunk asks for "latest" rather than the block number we just read.
- * These endpoints sit behind a load balancer: eth_blockNumber can be answered
- * by a node that is ahead of the one that then serves eth_getLogs, which
- * rejects the range as extending beyond its head. Letting the serving node
- * decide its own upper bound removes the mismatch entirely.
- */
-export async function logsInChunks<T>(
-  fetchRange: (from: bigint, to: bigint | "latest") => Promise<T[]>,
-  /**
-   * Where to start. Defaults to the deploy block — a full history read. The
-   * live feed passes a recent block instead, which is the difference between
-   * one request and a walk over the whole chain on every poll.
-   */
-  fromBlock: bigint = DEPLOY_BLOCK,
-): Promise<T[]> {
-  const latest = await publicClient.getBlockNumber();
-  /*
-   * 10,000 is Infura's hard cap — it answers `range N exceeds limit of 10000`
-   * above it, measured 2026-09-20. The public node accepted 45,000, which is
-   * why this used to be larger; that endpoint is no longer reliable enough to
-   * size against. Smaller chunks mean more requests, which is what the pacing
-   * and the cache above are for.
-   */
-  const STEP = 10_000n;
-  const out: T[] = [];
-  // A caller may hand us a cursor ahead of the head this node reports — the
-  // same load-balancer skew described above, seen from the other side. One
-  // chunk ending at "latest" is still correct and still returns nothing.
-  const start = fromBlock > latest ? latest : fromBlock;
-  for (let from = start; from <= latest; from += STEP) {
-    const end = from + STEP - 1n;
-    const reachesHead = end >= latest;
-    out.push(...(await fetchRange(from, reachesHead ? "latest" : end)));
-    if (reachesHead) break;
-  }
-  return out;
-}
-
 export async function readTradeEvents(): Promise<TradeEvent[]> {
-  const read = (address: `0x${string}`, categoryId: string) =>
-    logsInChunks((fromBlock, toBlock) =>
-      publicClient.getLogs({ address, event: STAKED_EVENT, fromBlock, toBlock }),
-    ).then((logs) =>
-      logs.map((l) => ({
-        marketKey: marketKey(categoryId, Number(l.args.marketId!)),
-        user: l.args.user!,
-        isYes: l.args.isYes!,
-        amount: l.args.amount!,
-        blockNumber: l.blockNumber!,
-        txHash: l.transactionHash!,
-      })),
-    );
+  const { receiver } = await syncLogs();
 
-  const readAmm = async (): Promise<TradeEvent[]> => {
-    const [bought, sold] = await Promise.all([
-      logsInChunks((fromBlock, toBlock) =>
-        publicClient.getLogs({
-          address: AMM_MARKET_ADDRESS,
-          event: BOUGHT_EVENT,
-          fromBlock,
-          toBlock,
-        }),
-      ),
-      logsInChunks((fromBlock, toBlock) =>
-        publicClient.getLogs({
-          address: AMM_MARKET_ADDRESS,
-          event: SOLD_EVENT,
-          fromBlock,
-          toBlock,
-        }),
-      ),
-    ]);
+  // Category from the emitting ADDRESS, not from which query returned the log.
+  // Four separate reads used to carry that knowledge in the call, which is one
+  // more place for a new contract to be forgotten.
+  const staked = parseEventLogs({ abi: [STAKED_EVENT], logs: receiver }).flatMap((l) => {
+    const category = categoryOf(l.address);
+    return category === null
+      ? []
+      : [
+          {
+            marketKey: marketKey(category, Number(l.args.marketId)),
+            user: l.args.user,
+            isYes: l.args.isYes,
+            amount: l.args.amount,
+            blockNumber: l.blockNumber,
+            txHash: l.transactionHash,
+          },
+        ];
+  });
 
-    return [
-      ...bought.map((l) => ({
-        marketKey: marketKey("amm", Number(l.args.marketId!)),
-        user: l.args.buyer!,
-        isYes: l.args.isYes!,
-        amount: l.args.collateralIn!,
-        blockNumber: l.blockNumber!,
-        txHash: l.transactionHash!,
-        amm: { direction: "buy" as const, shares: l.args.sharesOut!, fee: l.args.fee! },
-      })),
-      ...sold.map((l) => ({
-        marketKey: marketKey("amm", Number(l.args.marketId!)),
-        user: l.args.seller!,
-        isYes: l.args.isYes!,
-        // Collateral RECEIVED, not spent — see TradeEvent.
-        amount: l.args.collateralOut!,
-        blockNumber: l.blockNumber!,
-        txHash: l.transactionHash!,
-        amm: { direction: "sell" as const, shares: l.args.sharesIn!, fee: l.args.fee! },
-      })),
-    ];
-  };
+  const bought = parseEventLogs({ abi: [BOUGHT_EVENT], logs: receiver }).map((l) => ({
+    marketKey: marketKey("amm", Number(l.args.marketId)),
+    user: l.args.buyer,
+    isYes: l.args.isYes,
+    amount: l.args.collateralIn,
+    blockNumber: l.blockNumber,
+    txHash: l.transactionHash,
+    amm: { direction: "buy" as const, shares: l.args.sharesOut, fee: l.args.fee },
+  }));
 
-  const [flights, crypto, stocks, reserves, amm] = await Promise.all([
-    read(FLIGHT_MARKET_ADDRESS, "flights"),
-    read(CRYPTO_MARKET_ADDRESS, "crypto"),
-    read(STOCK_MARKET_ADDRESS, "stocks"),
-    read(RESERVE_MARKET_ADDRESS, "reserves"),
-    readAmm(),
-  ]);
+  const sold = parseEventLogs({ abi: [SOLD_EVENT], logs: receiver }).map((l) => ({
+    marketKey: marketKey("amm", Number(l.args.marketId)),
+    user: l.args.seller,
+    isYes: l.args.isYes,
+    // Collateral RECEIVED, not spent — see TradeEvent.
+    amount: l.args.collateralOut,
+    blockNumber: l.blockNumber,
+    txHash: l.transactionHash,
+    amm: { direction: "sell" as const, shares: l.args.sharesIn, fee: l.args.fee },
+  }));
+
   // Sorted so a replay sees trades in the order they happened, across
   // contracts — buys and sells interleave and order changes the result.
-  return [...flights, ...crypto, ...stocks, ...reserves, ...amm].sort((a, b) =>
+  return [...staked, ...bought, ...sold].sort((a, b) =>
     a.blockNumber === b.blockNumber ? 0 : a.blockNumber < b.blockNumber ? -1 : 1,
   );
 }
@@ -839,48 +777,37 @@ export async function readTradeEvents(): Promise<TradeEvent[]> {
  * here has to know which one was the seed.
  */
 export async function readLpEvents(): Promise<LpEvent[]> {
-  const [added, withdrawn] = await Promise.all([
-    logsInChunks((fromBlock, toBlock) =>
-      publicClient.getLogs({
-        address: AMM_MARKET_ADDRESS,
-        event: LIQUIDITY_ADDED_EVENT,
-        fromBlock,
-        toBlock,
-      }),
-    ),
-    logsInChunks((fromBlock, toBlock) =>
-      publicClient.getLogs({
-        address: AMM_MARKET_ADDRESS,
-        event: LIQUIDITY_WITHDRAWN_EVENT,
-        fromBlock,
-        toBlock,
-      }),
-    ),
-  ]);
+  const { receiver } = await syncLogs();
 
-  return [
-    ...added.map((l) => ({
-      marketKey: marketKey("amm", Number(l.args.marketId!)),
-      provider: l.args.provider!,
-      direction: "add" as const,
-      amount: l.args.collateralIn!,
-      lpShares: l.args.lpSharesMinted!,
-      totalLpShares: l.args.totalLpShares!,
-      blockNumber: l.blockNumber!,
-      txHash: l.transactionHash!,
-    })),
-    ...withdrawn.map((l) => ({
-      marketKey: marketKey("amm", Number(l.args.marketId!)),
-      provider: l.args.provider!,
-      direction: "withdraw" as const,
-      amount: l.args.amount!,
-      lpShares: l.args.lpShares!,
-      totalLpShares: 0n,
-      blockNumber: l.blockNumber!,
-      txHash: l.transactionHash!,
-    })),
-    // Ordered, because fee attribution depends on who was providing WHEN.
-  ].sort((a, b) => (a.blockNumber === b.blockNumber ? 0 : a.blockNumber < b.blockNumber ? -1 : 1));
+  const added = parseEventLogs({ abi: [LIQUIDITY_ADDED_EVENT], logs: receiver }).map((l) => ({
+    marketKey: marketKey("amm", Number(l.args.marketId)),
+    provider: l.args.provider,
+    direction: "add" as const,
+    amount: l.args.collateralIn,
+    lpShares: l.args.lpSharesMinted,
+    totalLpShares: l.args.totalLpShares,
+    blockNumber: l.blockNumber,
+    txHash: l.transactionHash,
+  }));
+
+  const withdrawn = parseEventLogs({
+    abi: [LIQUIDITY_WITHDRAWN_EVENT],
+    logs: receiver,
+  }).map((l) => ({
+    marketKey: marketKey("amm", Number(l.args.marketId)),
+    provider: l.args.provider,
+    direction: "withdraw" as const,
+    amount: l.args.amount,
+    lpShares: l.args.lpShares,
+    totalLpShares: 0n,
+    blockNumber: l.blockNumber,
+    txHash: l.transactionHash,
+  }));
+
+  // Ordered, because fee attribution depends on who was providing WHEN.
+  return [...added, ...withdrawn].sort((a, b) =>
+    a.blockNumber === b.blockNumber ? 0 : a.blockNumber < b.blockNumber ? -1 : 1,
+  );
 }
 
 /**

@@ -1,15 +1,20 @@
-import { parseAbiItem } from "viem";
+import { parseAbiItem, parseEventLogs, type AbiEvent } from "viem";
+import { marketKey } from "./chain";
 import {
-  AMM_MARKET_ADDRESS,
-  CRYPTO_MARKET_ADDRESS,
-  DEPLOY_BLOCK,
-  FLIGHT_MARKET_ADDRESS,
-  KNOWN_FORWARDERS,
-  RESERVE_MARKET_ADDRESS,
-  STOCK_MARKET_ADDRESS,
-} from "./config";
-import { logsInChunks, marketKey, publicClient } from "./chain";
+  categoryOf,
+  REPORT_PROCESSED_EVENT,
+  syncLogs,
+  type LogSource,
+  type RawLog,
+} from "./logScan";
 import type { CategoryId } from "./types";
+
+export {
+  categoryOf,
+  CONTRACT_CATEGORY,
+  RECEIVER_ADDRESSES,
+  REPORT_PROCESSED_EVENT,
+} from "./logScan";
 
 /**
  * Every log a settlement leaves behind, decoded in one place.
@@ -38,17 +43,6 @@ import type { CategoryId } from "./types";
  */
 
 // --- signatures -------------------------------------------------------------
-
-/**
- * Verified by hash against a real receipt rather than taken from documentation:
- * topic0 is 0x3617b009e9785c42daebadb6d3fb553243a4bf586d07ea72d65d80013ce116b5.
- * The hash pins the TYPES only — the RUNBOOK calls the bool both `success` and
- * `result`, and nothing on chain settles which name is right. `result` is what
- * the upstream KeystoneForwarder declares.
- */
-const REPORT_PROCESSED_EVENT = parseAbiItem(
-  "event ReportProcessed(address indexed receiver, bytes32 indexed workflowExecutionId, bytes2 indexed reportId, bool result)",
-);
 
 /** Crypto and AMM are byte-identical here — deliberately. Address discriminates. */
 const CRYPTO_REQUESTED_EVENT = parseAbiItem(
@@ -92,48 +86,6 @@ export const SETTLEMENT_EVENTS = {
   claimed: CLAIMED_EVENT,
   redeemed: REDEEMED_EVENT,
 } as const;
-
-// --- which contract is which -----------------------------------------------
-
-/**
- * Address is the ONLY safe discriminator.
- *
- * Crypto and AMM share topic0 on both `SettlementRequested` and `Settled`, so a
- * reader keyed on the event signature would merge two different markets that
- * happen to share a numeric id. This is the same trap the workflow avoids by
- * taking its receiver from `triggerEvent.address` rather than from config.
- */
-export const CONTRACT_CATEGORY = new Map<string, CategoryId>([
-  [FLIGHT_MARKET_ADDRESS.toLowerCase(), "flights"],
-  [CRYPTO_MARKET_ADDRESS.toLowerCase(), "crypto"],
-  [STOCK_MARKET_ADDRESS.toLowerCase(), "stocks"],
-  [RESERVE_MARKET_ADDRESS.toLowerCase(), "reserves"],
-  [AMM_MARKET_ADDRESS.toLowerCase(), "amm"],
-]);
-
-export const RECEIVER_ADDRESSES = [
-  FLIGHT_MARKET_ADDRESS,
-  CRYPTO_MARKET_ADDRESS,
-  STOCK_MARKET_ADDRESS,
-  RESERVE_MARKET_ADDRESS,
-  AMM_MARKET_ADDRESS,
-] as const;
-
-/**
- * Two categories sharing an address would silently merge their markets, with no
- * type error and no runtime error — one bad paste in `.env.local` is enough.
- * Asserted at module load so it cannot be discovered from wrong numbers.
- */
-if (CONTRACT_CATEGORY.size !== RECEIVER_ADDRESSES.length) {
-  throw new Error(
-    "Two market contracts share an address — check VITE_*_MARKET_ADDRESS. " +
-      `Expected ${RECEIVER_ADDRESSES.length} distinct, got ${CONTRACT_CATEGORY.size}.`,
-  );
-}
-
-export function categoryOf(address: string): CategoryId | null {
-  return CONTRACT_CATEGORY.get(address.toLowerCase()) ?? null;
-}
 
 // --- decoded shapes ---------------------------------------------------------
 
@@ -205,281 +157,189 @@ const keyFor = (address: string, marketId: bigint): string | null => {
   return category === null ? null : marketKey(category, Number(marketId));
 };
 
+/** Every family a failed source takes down with it. */
+const FAMILIES_BY_SOURCE: Record<LogSource, LogFamily[]> = {
+  receiver: ["requested", "settled", "payout"],
+  forwarder: ["report"],
+};
+
+/** Narrow a pile of raw logs to one event, by topic0. */
+const only = <const T extends AbiEvent>(logs: RawLog[], event: T) =>
+  parseEventLogs({ abi: [event], logs });
+
 /**
- * Read every settlement log from `from` to the head.
+ * Decode every settlement log the scan has seen.
+ *
+ * It no longer fetches: `syncLogs` reads the chain ONCE for the whole app and
+ * everything here is topic0 arithmetic over what came back. That is the
+ * difference between nine walks of a quarter of a million blocks and none.
  *
  * Failures are per family and RETURNED, never swallowed — the same rule
  * `readMarkets` follows. A family that fails leaves its logs absent, and a
  * caller that quietly rendered a shorter pipeline would be claiming the chain
- * said something it did not.
+ * said something it did not. They are reported per FAMILY rather than per
+ * source because that is the shape the page explains to a reader: "report logs
+ * could not be read" means something to somebody looking at a pipeline, and
+ * "the receiver query failed" does not.
  */
 export async function readSettlementLogs(
-  opts: { from?: bigint; families?: LogFamily[] } = {},
+  opts: { families?: LogFamily[] } = {},
 ): Promise<SettlementScan> {
-  const from = opts.from ?? DEPLOY_BLOCK;
   const wanted = opts.families;
-  const head = await publicClient.getBlockNumber();
-  const failures: { family: LogFamily; message: string }[] = [];
+  const scan = await syncLogs();
 
-  const run = async <T>(family: LogFamily, fn: () => Promise<T[]>): Promise<T[]> => {
-    if (wanted && !wanted.includes(family)) return [];
-    try {
-      return await fn();
-    } catch (e) {
-      failures.push({ family, message: e instanceof Error ? e.message : String(e) });
-      return [];
+  const failures = scan.failures.flatMap(({ source, message }) =>
+    FAMILIES_BY_SOURCE[source]
+      .filter((family) => !wanted || wanted.includes(family))
+      .map((family) => ({ family, message })),
+  );
+
+  const want = (family: LogFamily) => !wanted || wanted.includes(family);
+  const failed = new Set(failures.map((f) => f.family));
+  const on = (family: LogFamily) => want(family) && !failed.has(family);
+
+  const raw = scan.receiver;
+  const logs: SettlementLog[] = [];
+
+  if (on("requested")) {
+    for (const l of only(raw, CRYPTO_REQUESTED_EVENT)) {
+      const key = keyFor(l.address, l.args.marketId);
+      if (!key) continue;
+      logs.push({
+        kind: "requested",
+        marketKey: key,
+        terms: [
+          { label: "Asset", value: Number(l.args.asset) === 1 ? "ETH" : "BTC" },
+          { label: "Strike", value: l.args.strikePrice.toString() },
+          { label: "Expiry", value: l.args.expiryTime.toString() },
+        ],
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
     }
-  };
+    for (const l of only(raw, FLIGHT_REQUESTED_EVENT)) {
+      logs.push({
+        kind: "requested",
+        marketKey: marketKey("flights", Number(l.args.marketId)),
+        terms: [
+          { label: "Flight", value: l.args.flightIata },
+          { label: "Date", value: String(l.args.departureDate) },
+          { label: "Threshold", value: `${l.args.thresholdMinutes} min` },
+        ],
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+    for (const l of only(raw, STOCK_REQUESTED_EVENT)) {
+      logs.push({
+        kind: "requested",
+        marketKey: marketKey("stocks", Number(l.args.marketId)),
+        terms: [
+          { label: "Feed", value: l.args.feed },
+          { label: "Strike", value: l.args.strikePrice.toString() },
+          { label: "Expiry", value: l.args.expiryTime.toString() },
+        ],
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+    for (const l of only(raw, RESERVE_REQUESTED_EVENT)) {
+      logs.push({
+        kind: "requested",
+        marketKey: marketKey("reserves", Number(l.args.marketId)),
+        terms: [
+          { label: "Feed", value: l.args.feed },
+          { label: "Strike", value: l.args.strikePrice.toString() },
+          { label: "Expiry", value: l.args.expiryTime.toString() },
+        ],
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+  }
 
-  const scan = <T>(fetch: (fromBlock: bigint, toBlock: bigint | "latest") => Promise<T[]>) =>
-    logsInChunks(fetch, from);
-
-  const [requested, reports, settled, payouts] = await Promise.all([
-    run<RequestedLog>("requested", async () => {
-      const [crypto, flight, stock, reserve] = await Promise.all([
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: [CRYPTO_MARKET_ADDRESS, AMM_MARKET_ADDRESS],
-            event: CRYPTO_REQUESTED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: FLIGHT_MARKET_ADDRESS,
-            event: FLIGHT_REQUESTED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: STOCK_MARKET_ADDRESS,
-            event: STOCK_REQUESTED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: RESERVE_MARKET_ADDRESS,
-            event: RESERVE_REQUESTED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-      ]);
-
-      const out: RequestedLog[] = [];
-      for (const l of crypto) {
-        const key = keyFor(l.address, l.args.marketId!);
-        if (!key) continue;
-        out.push({
-          kind: "requested",
-          marketKey: key,
-          terms: [
-            { label: "Asset", value: Number(l.args.asset!) === 1 ? "ETH" : "BTC" },
-            { label: "Strike", value: l.args.strikePrice!.toString() },
-            { label: "Expiry", value: l.args.expiryTime!.toString() },
-          ],
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      for (const l of flight) {
-        out.push({
-          kind: "requested",
-          marketKey: marketKey("flights", Number(l.args.marketId!)),
-          terms: [
-            { label: "Flight", value: l.args.flightIata! },
-            { label: "Date", value: String(l.args.departureDate!) },
-            { label: "Threshold", value: `${l.args.thresholdMinutes!} min` },
-          ],
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      for (const l of stock) {
-        out.push({
-          kind: "requested",
-          marketKey: marketKey("stocks", Number(l.args.marketId!)),
-          terms: [
-            { label: "Feed", value: l.args.feed! },
-            { label: "Strike", value: l.args.strikePrice!.toString() },
-            { label: "Expiry", value: l.args.expiryTime!.toString() },
-          ],
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      for (const l of reserve) {
-        out.push({
-          kind: "requested",
-          marketKey: marketKey("reserves", Number(l.args.marketId!)),
-          terms: [
-            { label: "Feed", value: l.args.feed! },
-            { label: "Strike", value: l.args.strikePrice!.toString() },
-            { label: "Expiry", value: l.args.expiryTime!.toString() },
-          ],
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      return out;
-    }),
-
-    /**
-     * Filtered by indexed receiver, not filtered client-side. Other people's
-     * workflows share this forwarder — measured, not assumed — so an unfiltered
-     * read would both cost more and mix their settlements into ours.
-     */
-    run<ReportLog>("report", async () => {
-      const logs = await scan((fromBlock, toBlock) =>
-        publicClient.getLogs({
-          address: KNOWN_FORWARDERS,
-          event: REPORT_PROCESSED_EVENT,
-          args: { receiver: [...RECEIVER_ADDRESSES] },
-          fromBlock,
-          toBlock,
-        }),
-      );
-      return logs.map((l) => ({
-        kind: "report" as const,
-        receiver: l.args.receiver!,
-        category: categoryOf(l.args.receiver!),
-        accepted: l.args.result!,
+  if (on("report")) {
+    for (const l of only(scan.forwarder, REPORT_PROCESSED_EVENT)) {
+      logs.push({
+        kind: "report",
+        receiver: l.args.receiver,
+        category: categoryOf(l.args.receiver),
+        accepted: l.args.result,
         forwarder: l.address,
-        workflowExecutionId: l.args.workflowExecutionId!,
-        reportId: l.args.reportId!,
-        blockNumber: l.blockNumber!,
-        txHash: l.transactionHash!,
-        logIndex: l.logIndex!,
-      }));
-    }),
+        workflowExecutionId: l.args.workflowExecutionId,
+        reportId: l.args.reportId,
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+  }
 
-    run<SettledLog>("settled", async () => {
-      const [shared, flight] = await Promise.all([
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: [
-              CRYPTO_MARKET_ADDRESS,
-              STOCK_MARKET_ADDRESS,
-              RESERVE_MARKET_ADDRESS,
-              AMM_MARKET_ADDRESS,
-            ],
-            event: CRYPTO_SETTLED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: FLIGHT_MARKET_ADDRESS,
-            event: FLIGHT_SETTLED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-      ]);
+  if (on("settled")) {
+    for (const l of only(raw, CRYPTO_SETTLED_EVENT)) {
+      const key = keyFor(l.address, l.args.marketId);
+      if (!key) continue;
+      logs.push({
+        kind: "settled",
+        marketKey: key,
+        outcome: Number(l.args.outcome),
+        observedValue: l.args.observedValue,
+        evidenceHash: l.args.evidenceHash,
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+    for (const l of only(raw, FLIGHT_SETTLED_EVENT)) {
+      logs.push({
+        kind: "settled",
+        marketKey: marketKey("flights", Number(l.args.marketId)),
+        outcome: Number(l.args.outcome),
+        // Widened at the decode boundary so the fold sees one shape. An early
+        // arrival is a negative delay and must survive as one.
+        observedValue: BigInt(l.args.observedDelay),
+        evidenceHash: l.args.evidenceHash,
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+  }
 
-      const out: SettledLog[] = [];
-      for (const l of shared) {
-        const key = keyFor(l.address, l.args.marketId!);
-        if (!key) continue;
-        out.push({
-          kind: "settled",
-          marketKey: key,
-          outcome: Number(l.args.outcome!),
-          observedValue: l.args.observedValue!,
-          evidenceHash: l.args.evidenceHash!,
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      for (const l of flight) {
-        out.push({
-          kind: "settled",
-          marketKey: marketKey("flights", Number(l.args.marketId!)),
-          outcome: Number(l.args.outcome!),
-          // Widened at the decode boundary so the fold sees one shape. An early
-          // arrival is a negative delay and must survive as one.
-          observedValue: BigInt(l.args.observedDelay!),
-          evidenceHash: l.args.evidenceHash!,
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      return out;
-    }),
+  if (on("payout")) {
+    for (const l of only(raw, CLAIMED_EVENT)) {
+      const key = keyFor(l.address, l.args.marketId);
+      if (!key) continue;
+      logs.push({
+        kind: "payout",
+        marketKey: key,
+        who: l.args.user,
+        amount: l.args.amount,
+        via: "claim",
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+    for (const l of only(raw, REDEEMED_EVENT)) {
+      logs.push({
+        kind: "payout",
+        marketKey: marketKey("amm", Number(l.args.marketId)),
+        who: l.args.holder,
+        amount: l.args.amount,
+        via: "redeem",
+        blockNumber: l.blockNumber,
+        txHash: l.transactionHash,
+        logIndex: l.logIndex,
+      });
+    }
+  }
 
-    run<PayoutLog>("payout", async () => {
-      const [claimed, redeemed] = await Promise.all([
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: [
-              FLIGHT_MARKET_ADDRESS,
-              CRYPTO_MARKET_ADDRESS,
-              STOCK_MARKET_ADDRESS,
-              RESERVE_MARKET_ADDRESS,
-            ],
-            event: CLAIMED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-        scan((fromBlock, toBlock) =>
-          publicClient.getLogs({
-            address: AMM_MARKET_ADDRESS,
-            event: REDEEMED_EVENT,
-            fromBlock,
-            toBlock,
-          }),
-        ),
-      ]);
-
-      const out: PayoutLog[] = [];
-      for (const l of claimed) {
-        const key = keyFor(l.address, l.args.marketId!);
-        if (!key) continue;
-        out.push({
-          kind: "payout",
-          marketKey: key,
-          who: l.args.user!,
-          amount: l.args.amount!,
-          via: "claim",
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      for (const l of redeemed) {
-        out.push({
-          kind: "payout",
-          marketKey: marketKey("amm", Number(l.args.marketId!)),
-          who: l.args.holder!,
-          amount: l.args.amount!,
-          via: "redeem",
-          blockNumber: l.blockNumber!,
-          txHash: l.transactionHash!,
-          logIndex: l.logIndex!,
-        });
-      }
-      return out;
-    }),
-  ]);
-
-  return {
-    logs: [...requested, ...reports, ...settled, ...payouts].sort(orderLogs),
-    head,
-    failures,
-  };
+  return { logs: logs.sort(orderLogs), head: scan.head, failures };
 }
 
 /** Chain order: block, then position within the block. */

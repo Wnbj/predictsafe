@@ -1,6 +1,15 @@
 import { publicClient } from "./chain";
 
 /**
+ * Where the cache is kept between visits.
+ *
+ * Not keyed by contract, unlike the log cache: a block's timestamp is a fact
+ * about the chain rather than about this deployment, so pointing the app at
+ * different addresses does not invalidate any of it.
+ */
+const STORAGE_KEY = "predictsafe.blocktimes:1";
+
+/**
  * Wall-clock times for blocks, fetched lazily and cached forever.
  *
  * Nothing else in the app asks the chain what time it is — countdowns run off
@@ -12,7 +21,41 @@ import { publicClient } from "./chain";
  * lives at module scope rather than in React state so it survives navigation:
  * leaving the page and coming back should not re-fetch two hundred blocks.
  */
-const cache = new Map<bigint, number>();
+const cache = new Map<bigint, number>(restore());
+
+/**
+ * A mined block's timestamp cannot change, so this is the one thing in the app
+ * that is safe to trust from storage indefinitely. Without it a reload spends
+ * a dozen polls re-asking for times it already knew — 8 per tick, against a
+ * timeline that routinely shows a hundred blocks.
+ *
+ * Every failure path yields nothing rather than throwing: private windows,
+ * full quotas and cleared site data are all ordinary.
+ */
+function restore(): [bigint, number][] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as [string, number][];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap(([b, t]) =>
+      typeof b === "string" && typeof t === "number" ? [[BigInt(b), t] as [bigint, number]] : [],
+    );
+  } catch {
+    return [];
+  }
+}
+
+function persist(): void {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([...cache].map(([b, t]) => [b.toString(), t])),
+    );
+  } catch {
+    // Nothing to do — the times simply get fetched again next visit.
+  }
+}
 
 /** Blocks already known. Safe to read every render. */
 export function knownBlockTimes(): ReadonlyMap<bigint, number> {
@@ -53,5 +96,6 @@ export async function fetchBlockTimes(
     }),
   );
 
+  persist();
   return cache;
 }
