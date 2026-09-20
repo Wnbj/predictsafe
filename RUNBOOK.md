@@ -772,62 +772,51 @@ autonomy needs `_processReport` to accept a report for any market past
 and adds nothing to authorisation, which is already forwarder + author +
 workflow name.
 
-## Why flights are not on the DON
+## The local settlement path is retired
 
-Every other family migrated on 2026-09-20. Flights did not, and the reason is
-not the secret — it is arithmetic.
+**As of 2026-09-20 all five receivers are on the DON.** Every `cre workflow
+simulate --broadcast` instruction in this file is history: a receiver holds ONE
+forwarder, and all five now hold the production one, so a report delivered from
+this machine is refused. `cre/preflight.sh staging` will report five failures,
+and that is correct rather than broken — there is no contract left for that
+target to settle.
 
-**A DON is ten nodes, and every one of them makes the HTTP call.** That is what
-consensus over an off-chain read means. For the crypto path it costs nothing,
-because the load is spread over three public venues that tolerate it and only
-two of the three need to answer. For flights there is one provider on a free
-RapidAPI tier, and ten simultaneous requests are nine too many.
+`simulate` WITHOUT `--broadcast` is very much alive and is now the main use for
+the staging target: it runs the real WASM runtime locally, resolves Vault
+secrets itself, and answers in seconds. It is how the flight retry below was
+developed and how `randomSeed` was found to be missing.
 
-Measured 2026-09-20, a single settlement — not a sweep:
+## Flights on the DON: ten nodes against a one-node rate limit
 
-```
-Errors received: [HTTP 429 for BA286, HTTP 429 for BA286, ... ]   (nine of them)
-ConsensusFailed: received 9 errors which is >= f+1 (4)
-Market 11 -> outcome=3 delay=0m status=unavailable
-```
+Flights were the last family to migrate, and the obstacle was never the secret.
 
-One node got an answer. Nine were refused, consensus failed, and the market
-voided. **This is a per-settlement problem, so `sweepSchedule` was never the
-thing to worry about** — the sweep only multiplies something that already does
-not work.
+**A DON is ten nodes and every one makes the HTTP call.** Against the free
+RapidAPI tier that first meant one answer and nine HTTP 429s in the same
+second, and a voided settlement (2026-09-20). Crypto never hit this because its
+load spreads over three public venues and only two need to answer.
 
-`readAeroDataBox` has no retry: `sendRequest(...).result()` and a non-200
-throws. Whether a retry with per-node jitter would clear a burst limit is
-untested, and so is whether the SDK offers any way to delay inside a node
-function at all. The other lever is `secondaryUrl`, which the config already
-carries and which is empty — a second independent provider halves the load on
-each.
+The fix is in `sendSpreadOverNodes` (`main.ts`): full jitter over a doubling
+window, applied to the FIRST attempt as well, retrying only on 429. A fixed
+backoff would move the collision rather than dissolve it, because ten nodes
+that failed together retry together.
 
-### The SDK's types promise more than the runtime provides
+Measured after the change, four consecutive runs on the same free tier inside
+ten minutes — forty calls, zero refusals:
 
-`@chainlink/cre-sdk` 1.19.0 declares a `randomSeed(mode: 1 | 2)` global, with a
-docstring, in `dist/sdk/types/global.d.ts`. It typechecks. **It does not exist
-at runtime** — the simulator answers `randomSeed is not defined`. It is a host
-binding the SDK uses internally, not part of the workflow sandbox.
+| run | trigger | nodes answering |
+|---|---|---|
+| 22:27 | manual request | 10 / 10 |
+| 22:30 | **the cron sweep, unattended** | 10 / 10 |
+| 22:34 | manual request | 10 / 10 |
+| 22:36 | manual request | 10 / 10 |
 
-Probed in the simulator on 2026-09-21, from inside a node-mode function:
+The sweep run matters most: a schedule was the case where multiplying one API
+call by ten nodes looked least survivable.
 
-| global | present |
-|---|---|
-| `sleep(ms)` | yes |
-| `Math.random()` | yes — successive calls differ |
-| `Date.now()` | yes |
-| `randomSeed` | **no**, despite the declaration |
-| `crypto` | no |
-| `performance` | no |
-
-`setTimeout` and `setInterval` are declared `@deprecated ... not available`, so
-those at least announce themselves. `randomSeed` does not.
-
-The lesson generalises past this one name: **a typecheck proves the SDK's
-authors wrote a declaration, not that the host implements it.** Probe anything
-you have not seen execute. The cheapest probe is a `typeof` sweep thrown as an
-error from inside the handler — the simulator prints it, and it costs one run.
+**Entropy comes from `Math.random()` mixed with the low digits of `Date.now()`,
+because the SDK's own `randomSeed` does not exist** — see the next section. One
+node cannot show whether either varies ACROSS nodes; four clean runs can, since
+pinned entropy would have collided every time.
 
 ### Proving a handler on the DON without the one-way step
 
