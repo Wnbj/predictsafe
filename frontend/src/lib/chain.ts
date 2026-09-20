@@ -36,6 +36,55 @@ import {
   type TradeEvent,
 } from "./types";
 
+/**
+ * One queue for EVERY request this app makes, with a gap between them.
+ *
+ * It used to wrap only the log ranges, which left the market reads, the block
+ * timestamps and `eth_blockNumber` firing unpaced alongside them — and those
+ * are what tipped the endpoint over. A rate limit is a property of the
+ * connection, not of one kind of call, so the choke point belongs in the
+ * transport where nothing can route around it.
+ *
+ * Retries happen INSIDE a slot, deliberately: a request that is being refused
+ * holds the queue while it backs off, so the app slows down under throttling
+ * instead of adding to it.
+ *
+ * Serialising costs roughly a request's latency plus this gap, which is slow
+ * exactly once — the feed caches what it read, so later visits ask only for
+ * the tail. A burst that gets refused is not faster than a trickle that
+ * succeeds.
+ */
+const RPC_GAP_MS = 150;
+let rpcQueue: Promise<unknown> = Promise.resolve();
+
+function paced<T>(fn: () => Promise<T>): Promise<T> {
+  const next = rpcQueue.then(async () => {
+    const result = await fn();
+    await new Promise((r) => setTimeout(r, RPC_GAP_MS));
+    return result;
+  });
+  // The queue must survive a rejection, or one failed request stops every one
+  // that follows it for the life of the page.
+  rpcQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/** `http()`, with every request it issues put through the queue above. */
+function pacedHttp(url: string, config: Parameters<typeof http>[1]) {
+  const inner = http(url, config);
+  return ((params) => {
+    const transport = inner(params);
+    return {
+      ...transport,
+      request: (args: Parameters<typeof transport.request>[0]) =>
+        paced(() => transport.request(args)),
+    };
+  }) as typeof inner;
+}
+
 export const publicClient = createPublicClient({
   chain,
   /*
@@ -46,19 +95,43 @@ export const publicClient = createPublicClient({
    * simply fails a fraction of identical queries with no pattern. A refusal
    * that is retried costs a few hundred milliseconds; one that is not loses a
    * whole family of logs for that poll.
+   *
+   * The delay is viem's own exponential backoff rather than a fixed number:
+   * a fixed 400ms retried five times into a limiter that is still saturated
+   * just spends the budget faster.
    */
-  transport: http(RPC_URL, {
+  transport: pacedHttp(RPC_URL, {
     retryCount: 5,
-    retryDelay: 400,
     /*
-     * JSON-RPC batching. Reading the markets is dozens of `eth_call`s — core
-     * and terms for every market across five contracts — and sent one per
-     * request they exhausted the rate budget that the log scan was already
-     * using, leaving the app stuck on "Loading markets from Sepolia…" while
-     * the feed behind it had finished. Batched, they cost a handful of
-     * requests instead.
+     * JSON-RPC batching is deliberately OFF, and this cost an evening.
+     *
+     * Batching looks free here — reading the markets is dozens of `eth_call`s
+     * and the log scan is a few hundred `eth_getLogs` — but Infura answers a
+     * throttled entry INSIDE a batch with a bare object and no envelope:
+     *
+     *   {"code":-32005,"message":"Too Many Requests","data":{...}}
+     *
+     * no `id`, no `jsonrpc`, and crucially no `error` key. viem sorts the
+     * batch response by `id` (`undefined - n` is NaN, so the order is already
+     * arbitrary) and then destructures `{ error, result }` off each entry. A
+     * refusal shaped like this has neither, so viem returns `undefined` AS A
+     * SUCCESSFUL RESULT and the retry never fires.
+     *
+     * Downstream that surfaces as nonsense a long way from the cause:
+     * `Cannot read properties of undefined (reading 'map')` from `getLogs`,
+     * `aggregate3 returned no data ("0x")` from the market read, and
+     * `Cannot convert undefined to a BigInt` from a settled-event decode.
+     * Three different bugs, one throttled request.
+     *
+     * Unbatched, the same refusal arrives as HTTP 429, which viem raises as an
+     * `HttpRequestError` and retries — the property the endpoint was chosen
+     * for. Batching is what throws it away. Measured 2026-09-20 against a
+     * 20-request batch: 16 entries carried `-32603 service temporarily
+     * unavailable`, which IS an envelope and IS retried; 3 came back bare.
+     *
+     * The `eth_call`s this was meant to spare are already folded into
+     * `aggregate3` by viem's multicall, so almost nothing is lost.
      */
-    batch: true,
   }),
 });
 
@@ -652,37 +725,6 @@ const LIQUIDITY_WITHDRAWN_EVENT = parseAbiItem(
  * rejects the range as extending beyond its head. Letting the serving node
  * decide its own upper bound removes the mismatch entirely.
  */
-/**
- * One queue for every log range this app asks for, with a gap between them.
- *
- * The scans are issued concurrently — four log families, several contracts
- * each, every one walking the chain in chunks — so a cold load fired about 190
- * `eth_getLogs` requests at once and the public node answered with HTTP 429
- * until the page rendered nothing at all. Measured 2026-09-19.
- *
- * Serialising them costs roughly a chunk's latency plus this gap per request,
- * which is slow exactly once: the feed caches what it read, so later visits ask
- * only for the tail. A burst that gets refused is not faster than a trickle
- * that succeeds.
- */
-const RPC_GAP_MS = 120;
-let rpcQueue: Promise<unknown> = Promise.resolve();
-
-function paced<T>(fn: () => Promise<T>): Promise<T> {
-  const next = rpcQueue.then(async () => {
-    const result = await fn();
-    await new Promise((r) => setTimeout(r, RPC_GAP_MS));
-    return result;
-  });
-  // The queue must survive a rejection, or one failed range stops every scan
-  // that follows it for the life of the page.
-  rpcQueue = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
-}
-
 export async function logsInChunks<T>(
   fetchRange: (from: bigint, to: bigint | "latest") => Promise<T[]>,
   /**
@@ -709,7 +751,7 @@ export async function logsInChunks<T>(
   for (let from = start; from <= latest; from += STEP) {
     const end = from + STEP - 1n;
     const reachesHead = end >= latest;
-    out.push(...(await paced(() => fetchRange(from, reachesHead ? "latest" : end))));
+    out.push(...(await fetchRange(from, reachesHead ? "latest" : end)));
     if (reachesHead) break;
   }
   return out;
