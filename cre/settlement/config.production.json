@@ -8,8 +8,8 @@
   "gasLimit": "1000000",
   "secondaryUrl": "",
   "cryptoContractAddress": "0x8DA11eb17D5F3f4427aA3017E95e50b132A210be",
-  "stockContractAddress": "",
-  "reserveContractAddress": "",
-  "ammContractAddress": "",
+  "stockContractAddress": "0x451bcdB90EC6f6F5f40B5B2578aef641e36b71ca",
+  "reserveContractAddress": "0xa768Be2741A0464b81606649eCa45bfF7aD4d939",
+  "ammContractAddress": "0xc9961096dc98eE17eD28bB417BB726F1b64f84FF",
   "sweepSchedule": ""
 }

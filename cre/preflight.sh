@@ -159,6 +159,14 @@ for name, key in pairs.items():
         print(f"    MISSING  {name}_MARKET_ADDRESS not found in config.ts"); bad += 1
     elif not flow:
         print(f"    skip     {name}: not configured for the workflow")
+    elif flow == "0x" + "0" * 40:
+        # The flight handler registers unconditionally, so a config that does
+        # not want it points it at the zero address. That is a SILENCED
+        # handler, not a disagreement about which contract to watch — the same
+        # distinction the contract loop above already makes. Reporting it as a
+        # mismatch turns the one script whose job is to be believed into one
+        # that cries wolf on every production run.
+        print(f"    silent   {name}: handler pointed at the zero address")
     elif app != flow:
         print(f"    MISMATCH {name}\n             app  {app}\n             flow {flow}"); bad += 1
     else:
