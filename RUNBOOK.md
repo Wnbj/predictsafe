@@ -803,6 +803,32 @@ function at all. The other lever is `secondaryUrl`, which the config already
 carries and which is empty — a second independent provider halves the load on
 each.
 
+### The SDK's types promise more than the runtime provides
+
+`@chainlink/cre-sdk` 1.19.0 declares a `randomSeed(mode: 1 | 2)` global, with a
+docstring, in `dist/sdk/types/global.d.ts`. It typechecks. **It does not exist
+at runtime** — the simulator answers `randomSeed is not defined`. It is a host
+binding the SDK uses internally, not part of the workflow sandbox.
+
+Probed in the simulator on 2026-09-21, from inside a node-mode function:
+
+| global | present |
+|---|---|
+| `sleep(ms)` | yes |
+| `Math.random()` | yes — successive calls differ |
+| `Date.now()` | yes |
+| `randomSeed` | **no**, despite the declaration |
+| `crypto` | no |
+| `performance` | no |
+
+`setTimeout` and `setInterval` are declared `@deprecated ... not available`, so
+those at least announce themselves. `randomSeed` does not.
+
+The lesson generalises past this one name: **a typecheck proves the SDK's
+authors wrote a declaration, not that the host implements it.** Probe anything
+you have not seen execute. The cheapest probe is a `typeof` sweep thrown as an
+error from inside the handler — the simulator prints it, and it costs one run.
+
 ### Proving a handler on the DON without the one-way step
 
 The migration itself is irreversible per contract: a receiver holds ONE

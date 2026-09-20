@@ -490,6 +490,109 @@ const simpleSourceSchema = z.object({
   arrivalDelayMinutes: z.number().nullable(),
 })
 
+/**
+ * Spreading ten nodes over a rate limit that only tolerates one.
+ *
+ * A DON is ten nodes and every one of them makes the HTTP call — that is what
+ * consensus over an off-chain read means. Measured 2026-09-20 against the free
+ * RapidAPI tier: ONE node got an answer and nine got HTTP 429, all in the same
+ * second, and the settlement voided because nine errors is >= f+1.
+ *
+ * The shape of that failure is the reason this exists rather than a bigger
+ * plan. An exhausted monthly quota would have failed all ten; one success says
+ * the key is valid and in budget, and the limit is about SIMULTANEITY. Ten
+ * calls that arrive together are the problem, so arriving apart is the fix.
+ *
+ * Full jitter over a doubling window, not a fixed backoff: a fixed one moves
+ * the collision rather than dissolving it, because ten nodes that failed
+ * together would retry together. The FIRST attempt is jittered too — t=0 is
+ * precisely the moment every node is guaranteed to be present.
+ *
+ * CONSENSUS SAFETY: this varies WHEN a node calls, never what it answers.
+ * Nothing here reaches `Observation`, which is the thing aggregated across
+ * nodes — see the hazard note on that type. Node mode exists for exactly this
+ * kind of per-node divergence.
+ */
+const FIRST_WINDOW_MS = 1_500
+const FETCH_ATTEMPTS = 3
+const TOO_MANY_REQUESTS = 429
+
+/**
+ * How long this node waits before its `attempt`-th try.
+ *
+ * Pure, and separated from the sleeping so the spread can be examined without
+ * a host behind it: `randomSeed` and `sleep` are QuickJS globals that do not
+ * exist under `bun test`.
+ *
+ * The seed's range is deliberately not assumed. A value already in [0,1) is
+ * used as is; anything larger is reduced modulo a prime. Both paths land in
+ * [0,1), which is all the caller needs, and neither depends on where the
+ * number came from.
+ */
+export const retryDelayMs = (
+  attempt: number,
+  seed: number,
+  firstWindowMs: number = FIRST_WINDOW_MS,
+): number => {
+  const magnitude = Math.abs(seed)
+  const unit = !Number.isFinite(magnitude)
+    ? 0.5
+    : magnitude < 1
+      ? magnitude
+      : (magnitude % 1_000_003) / 1_000_003
+  return Math.floor(unit * firstWindowMs * 2 ** attempt)
+}
+
+/**
+ * One HTTP read, retried while the provider is saying "too many".
+ *
+ * Only 429 is retried. Every other failure — a 404, a 500, a malformed body —
+ * is answered on the first try and retrying it would just spend the budget
+ * that the nodes being rate-limited need.
+ *
+ * There is no `runtime` here to log with: this runs inside the node-mode
+ * function, which receives a sender and nothing else. So the waiting is
+ * carried in the ERROR instead, and the consensus failure prints every node's
+ * message — which is the only place it can be read anyway.
+ */
+/**
+ * Per-node entropy, from two sources because neither is guaranteed on its own.
+ *
+ * The SDK's types declare a `randomSeed(1)` global for exactly this, and it
+ * DOES NOT EXIST at runtime — measured 2026-09-21 in the simulator, which
+ * throws `randomSeed is not defined`. It is a host binding for the SDK itself,
+ * not part of the workflow sandbox. A typecheck passes on it, so this is one
+ * more entry in the list of places where the installed types describe more
+ * than the runtime provides.
+ *
+ * What the same probe found present: `sleep`, `Math.random` and `Date.now`.
+ * Absent: `crypto` and `performance`.
+ *
+ * Both are mixed because a single node cannot reveal whether either varies
+ * ACROSS nodes, and each could plausibly be pinned: QuickJS may be seeded
+ * deterministically for reproducibility, and a host clock may be fixed for
+ * consensus. If either one varies, the nodes separate — and the error message
+ * carries the total wait, so the DON's own logs will say which.
+ */
+const jitterSeed = (): number => Math.random() * 1_000_003 + (Date.now() % 100_000)
+
+const sendSpreadOverNodes = <T>(send: () => T, statusOf: (r: T) => number, label: string): T => {
+  let waited = 0
+  let last = 0
+  for (let attempt = 0; attempt < FETCH_ATTEMPTS; attempt++) {
+    const delay = retryDelayMs(attempt, jitterSeed())
+    waited += delay
+    sleep(delay)
+
+    const response = send()
+    last = statusOf(response)
+    if (last !== TOO_MANY_REQUESTS) return response
+  }
+  throw new Error(
+    `HTTP ${last} for ${label} after ${FETCH_ATTEMPTS} attempts over ${waited}ms`,
+  )
+}
+
 const readAeroDataBox = (
   sendRequester: HTTPSendRequester,
   apiUrl: string,
@@ -498,16 +601,21 @@ const readAeroDataBox = (
   departureDateIso: string,
 ): SourceReading => {
   const url = `${apiUrl}/flights/number/${flightIata}/${departureDateIso}?dateLocalRole=Departure`
-  const response = sendRequester
-    .sendRequest({
-      url,
-      method: "GET",
-      headers: {
-        "X-RapidAPI-Key": apiKey,
-        "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
-      },
-    })
-    .result()
+  const response = sendSpreadOverNodes(
+    () =>
+      sendRequester
+        .sendRequest({
+          url,
+          method: "GET",
+          headers: {
+            "X-RapidAPI-Key": apiKey,
+            "X-RapidAPI-Host": "aerodatabox.p.rapidapi.com",
+          },
+        })
+        .result(),
+    (r) => r.statusCode,
+    flightIata,
+  )
 
   // 204 = no matching flight for that number/date.
   if (response.statusCode === 204) {

@@ -20,6 +20,7 @@ import {
   walkToRoundInForce,
   type Config,
   type FeedRound,
+  retryDelayMs,
 } from "./main"
 
 /**
@@ -520,5 +521,77 @@ describe("trigger indices", () => {
 
   test("skip a sweep whose contract address is empty", () => {
     expect(handlersFor({ stockContractAddress: "" })).not.toContain(onSweepStocks)
+  })
+})
+
+
+/**
+ * Ten nodes against a rate limit that tolerates one.
+ *
+ * Measured 2026-09-20: one node got an answer and nine got HTTP 429, in the
+ * same second, and the settlement voided. The fix is not to call less — a DON
+ * calls once per node by definition — but to stop calling at the same instant.
+ *
+ * These tests are about the SPREAD, not about any single delay. A backoff that
+ * returns the same number for every node would pass a naive "is it positive?"
+ * check and move the collision instead of dissolving it.
+ */
+describe("retryDelayMs", () => {
+  const window = 1_500
+
+  test("lands inside the window for the first attempt", () => {
+    for (const seed of [0, 1, 7, 12345, 999_999_999]) {
+      const d = retryDelayMs(0, seed, window)
+      expect(d).toBeGreaterThanOrEqual(0)
+      expect(d).toBeLessThan(window)
+    }
+  })
+
+  test("doubles the WINDOW on each attempt, not the value", () => {
+    // The ceiling is what doubles. The value only tracks it approximately,
+    // because flooring a doubled product is not the same as doubling a
+    // floored one — a distinction worth a test rather than a surprise.
+    const seed = 987_654
+    for (const attempt of [0, 1, 2]) {
+      const ceiling = window * 2 ** attempt
+      const delay = retryDelayMs(attempt, seed, window)
+      expect(delay).toBeGreaterThanOrEqual(0)
+      expect(delay).toBeLessThan(ceiling)
+    }
+
+    const first = retryDelayMs(0, seed, window)
+    // Within one unit of exactly doubling, which is the floor's whole error.
+    expect(Math.abs(retryDelayMs(1, seed, window) - first * 2)).toBeLessThanOrEqual(1)
+    expect(Math.abs(retryDelayMs(2, seed, window) - first * 4)).toBeLessThanOrEqual(3)
+  })
+
+  /**
+   * The property that actually matters. Ten different seeds must not collapse
+   * onto a handful of delays, or the nodes arrive together anyway.
+   */
+  test("spreads ten different seeds across the window", () => {
+    const seeds = [11, 250_003, 417_889, 600_001, 733_331, 812_345, 904_321, 55_555, 123_457, 987_653]
+    const delays = seeds.map((s) => retryDelayMs(0, s, window))
+
+    expect(new Set(delays).size).toBe(seeds.length)
+    // And they are actually spread, not clustered in one corner of it.
+    expect(Math.max(...delays) - Math.min(...delays)).toBeGreaterThan(window / 2)
+  })
+
+  /**
+   * The SDK documents `randomSeed` only as "random seed value" and says
+   * nothing about its range, so both readings have to work: a float already in
+   * [0,1), and a large integer.
+   */
+  test("folds a seed of any magnitude into the window", () => {
+    expect(retryDelayMs(0, 0.25, window)).toBe(375)
+    expect(retryDelayMs(0, 2_000_006, window)).toBe(retryDelayMs(0, 0, window))
+    expect(retryDelayMs(0, -0.75, window)).toBe(1125)
+  })
+
+  test("never returns a negative delay, whatever the host hands back", () => {
+    for (const seed of [-1, -999_999, Number.NaN, Number.POSITIVE_INFINITY, 0]) {
+      expect(retryDelayMs(1, seed, window)).toBeGreaterThanOrEqual(0)
+    }
   })
 })
