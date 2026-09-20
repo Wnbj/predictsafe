@@ -592,6 +592,19 @@ one. This table has already been wrong once for exactly that reason — the
 reserve handler was added at position 3 and the sweeps shifted underneath the
 line that used to say 3/4/5.
 
+**Each sweep is guarded by its OWN contract address, and the zero address
+counts as absent.** A sweep over an unconfigured contract is not a quiet no-op:
+it `eth_call`s the zero address, gets `0x` back because nothing is deployed
+there, and throws while decoding — once every tick, for ever, in the one list
+you read when something is genuinely wrong. Note the asymmetry with the flight
+LOG handler, which registers unconditionally and IS silenced by the zero
+address: a log handler waiting for an event nobody emits costs nothing, while a
+cron handler fires whether or not anything happened.
+
+So in the production shape as of 2026-09-20 — flights silenced, the other four
+live — the list is 0 flight log, 1 crypto log, 2 stock log, 3 reserve log,
+4 cron sweep crypto, 5 cron sweep stocks. There is no flight sweep.
+
 **The table is now asserted by a test** (`describe("trigger indices")` in
 `cre/settlement/settlement.test.ts`), which calls the real `initWorkflow` and
 compares handler identities rather than restating the rule. Insert a handler

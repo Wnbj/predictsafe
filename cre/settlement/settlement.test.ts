@@ -494,4 +494,31 @@ describe("trigger indices", () => {
       onReserveSettlementRequested,
     ])
   })
+
+  /**
+   * A sweep over a contract that is not configured is not a quiet no-op: it
+   * calls the zero address, gets `0x` back, and throws while decoding — once
+   * every schedule tick, for ever. So each sweep is guarded by its own
+   * address, and the zero address counts as absent.
+   *
+   * This is the production shape as of 2026-09-20: flights are silenced while
+   * their provider cannot serve ten nodes at once, and the sweeps for the two
+   * families that need no API key run without them.
+   */
+  test("skip a sweep whose contract is silenced by the zero address", () => {
+    const handlers = handlersFor({
+      flightContractAddress: "0x0000000000000000000000000000000000000000",
+    })
+
+    // The flight LOG handler still registers — it is waiting for an event
+    // nobody emits, which costs nothing. The flight SWEEP does not.
+    expect(handlers[0]).toBe(onSettlementRequested)
+    expect(handlers).not.toContain(onSweepFlights)
+    expect(handlers).toContain(onSweepCrypto)
+    expect(handlers).toContain(onSweepStocks)
+  })
+
+  test("skip a sweep whose contract address is empty", () => {
+    expect(handlersFor({ stockContractAddress: "" })).not.toContain(onSweepStocks)
+  })
 })

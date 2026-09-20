@@ -1929,6 +1929,16 @@ export const onReserveSettlementRequested = (
   })
 }
 
+/**
+ * The "this handler is switched off" address.
+ *
+ * The flight log handler registers unconditionally, so a config that does not
+ * want it points at this instead of leaving the field empty. Named because the
+ * sweeps now have to recognise it too, and a literal repeated in two places is
+ * a literal that will eventually differ in one of them.
+ */
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000"
+
 export const initWorkflow = (config: Config) => {
   const network = getNetwork({
     chainFamily: "evm",
@@ -2020,11 +2030,28 @@ export const initWorkflow = (config: Config) => {
   // triggers are separate executions, so each contract gets its own
   // allowance. Registered last so their indices stay stable as categories
   // come and go.
+  //
+  // Each sweep is guarded by ITS OWN contract address, like every log handler
+  // above. A sweep over an unconfigured contract is not a quiet no-op: it
+  // `eth_call`s the zero address, gets `0x` back because there is no code
+  // there, and throws while decoding. On a schedule that is a FAILURE
+  // execution every thirty minutes, for ever, in the one list you read when
+  // something is actually wrong.
+  //
+  // Note the asymmetry with the flight LOG handler, which registers
+  // unconditionally and is silenced by pointing it at the zero address. That
+  // is a handler waiting for an event nobody emits, which costs nothing. A
+  // cron handler fires whether or not anything happened, so it cannot be
+  // silenced the same way.
   if (config.sweepSchedule && config.sweepSchedule !== "") {
     const cron = new CronCapability()
-    handlers.push(handler(cron.trigger({ schedule: config.sweepSchedule }), onSweepFlights))
-    handlers.push(handler(cron.trigger({ schedule: config.sweepSchedule }), onSweepCrypto))
-    handlers.push(handler(cron.trigger({ schedule: config.sweepSchedule }), onSweepStocks))
+    const sweep = (address: string | undefined, fn: (runtime: Runtime<Config>) => string) => {
+      if (!address || address === "" || address === ZERO_ADDRESS) return
+      handlers.push(handler(cron.trigger({ schedule: config.sweepSchedule }), fn))
+    }
+    sweep(config.flightContractAddress, onSweepFlights)
+    sweep(config.cryptoContractAddress, onSweepCrypto)
+    sweep(config.stockContractAddress, onSweepStocks)
   }
 
   return handlers
