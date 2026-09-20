@@ -1,5 +1,5 @@
 import { orderLogs, type PayoutLog, type ReportLog, type RequestedLog, type SettledLog, type SettlementLog } from "./settlementEvents";
-import type { LpEvent, Market } from "./types";
+import { MarketStatus, type LpEvent, type Market } from "./types";
 
 /**
  * Folding settlement logs into what actually happened to each market.
@@ -21,6 +21,22 @@ export type PipelineState =
   | "settled"
   /** Settled, but no forwarder log in range — absence of evidence, not failure. */
   | "settled-unattested"
+  /**
+   * Void on chain with nothing in the logs to explain it.
+   *
+   * `ownerVoid` — the POC escape hatch on every market contract — writes
+   * `Status.Void` and emits NOTHING. A log-derived pipeline therefore cannot
+   * see it, and an attempt cleared that way would otherwise sit at the top of
+   * the page reading "waiting for a report" for ever, which is the one thing
+   * this page must not do: claim something is in progress when it is over.
+   *
+   * This is the single place state is read from `market.status` rather than
+   * from logs, and it is deliberately narrow — only to move an attempt OUT of
+   * flight, never to declare how it resolved. The status enum is trustworthy
+   * here because `readAmmMarkets` normalises the AMM's offset numbering at the
+   * read boundary; it was not when this module was written.
+   */
+  | "abandoned"
   /** Settled and at least some money has left. */
   | "paid";
 
@@ -287,6 +303,8 @@ function stateOf(a: Attempt): PipelineState {
     if (!a.report) return "settled-unattested";
     return "settled";
   }
+  // Nothing settled it — but it is not waiting either. See "abandoned".
+  if (a.market?.status === MarketStatus.Void) return "abandoned";
   return "in-flight";
 }
 

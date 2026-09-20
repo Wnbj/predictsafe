@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CATEGORIES } from "../lib/categories";
-import { totalPool } from "../lib/pricing";
+import { isUnstakedAndResolved, totalPool } from "../lib/pricing";
 import type { CategoryId, Market, TradeEvent } from "../lib/types";
 import { MarketCard } from "../components/MarketCard";
 import { groupIntoEvents, isLadder } from "../lib/events";
@@ -27,12 +27,29 @@ export function Markets({
   onOpenMarket: (key: string) => void;
 }) {
   const [sort, setSort] = useState<SortMode>("backed");
+  const [showRehearsals, setShowRehearsals] = useState(false);
+
+  /**
+   * Markets that resolved without anyone staking — see `isUnstakedAndResolved`.
+   * Counted before they are removed, because the count is what makes hiding
+   * them honest: nothing here is deleted, and one click brings them back.
+   */
+  const inCategory = useMemo(
+    () =>
+      categoryFilter === "all"
+        ? markets
+        : markets.filter((m) => m.categoryId === categoryFilter),
+    [markets, categoryFilter],
+  );
+  const rehearsalCount = useMemo(
+    () => inCategory.filter(isUnstakedAndResolved).length,
+    [inCategory],
+  );
 
   const filtered = useMemo(() => {
-    let out =
-      categoryFilter === "all"
-        ? [...markets]
-        : markets.filter((m) => m.categoryId === categoryFilter);
+    let out = showRehearsals
+      ? [...inCategory]
+      : inCategory.filter((m) => !isUnstakedAndResolved(m));
 
     if (sort === "backed") {
       out.sort((a, b) => {
@@ -45,7 +62,7 @@ export function Markets({
       out.sort((a, b) => a.closeTime - b.closeTime);
     }
     return out;
-  }, [markets, categoryFilter, sort]);
+  }, [inCategory, showRehearsals, sort]);
 
   return (
     <div className="page">
@@ -54,6 +71,20 @@ export function Markets({
       </h2>
       <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
         {filtered.length} market{filtered.length === 1 ? "" : "s"}
+        {rehearsalCount > 0 && (
+          <>
+            {" · "}
+            <button
+              type="button"
+              className="linklike"
+              onClick={() => setShowRehearsals((v) => !v)}
+            >
+              {showRehearsals
+                ? `hide ${rehearsalCount} test market${rehearsalCount === 1 ? "" : "s"}`
+                : `${rehearsalCount} test market${rehearsalCount === 1 ? "" : "s"} hidden`}
+            </button>
+          </>
+        )}
       </p>
 
       <div

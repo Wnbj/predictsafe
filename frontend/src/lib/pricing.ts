@@ -48,6 +48,27 @@ export function totalPool(m: Market): bigint {
 }
 
 /**
+ * A market that resolved without anyone ever staking on it.
+ *
+ * Every one of these on this deployment is a rehearsal: a flight replayed to
+ * check the provider, a backtest against a feed round, a market created purely
+ * to see whether a handler fires. They are real history and they stay on
+ * chain — `/live` shows every settlement whatever the stakes — but on a board
+ * whose job is to show what people are betting on, twenty cards reading
+ * "Void · No stakes yet · 0 mUSDC" describe the testing, not the product.
+ *
+ * The discriminator is deliberately economic rather than a list of ids: a
+ * market nobody staked into cost nobody anything and paid nobody, so it has no
+ * story a reader of this page is looking for. It must be RESOLVED as well —
+ * an open market with no stakes yet is not a rehearsal, it is an invitation,
+ * and hiding it would hide the one thing a visitor can act on.
+ */
+export function isUnstakedAndResolved(m: Market): boolean {
+  const resolved = m.status === MarketStatus.Settled || m.status === MarketStatus.Void;
+  return resolved && totalPool(m) === 0n;
+}
+
+/**
  * A one-sided book cannot pay out — FlightMarket voids it at settlement
  * regardless of the outcome the DON agrees on. Worth surfacing in the UI
  * before someone stakes into a market that can only refund.

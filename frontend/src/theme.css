@@ -356,3 +356,19 @@ input:focus {
     overflow-x: auto;
   }
 }
+
+/* A button that reads as prose — used where an action belongs inside a
+   sentence rather than beside it, such as the count of hidden markets. */
+.linklike {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.linklike:hover {
+  color: var(--color-text);
+}

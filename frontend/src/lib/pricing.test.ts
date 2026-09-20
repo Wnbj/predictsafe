@@ -5,6 +5,7 @@ import {
   impliedYesPercent,
   isOneSided,
   totalPool,
+  isUnstakedAndResolved,
 } from "./pricing";
 import { MarketStatus, Outcome, type Market } from "./types";
 import { amm0, crypto0 } from "./fixtures";
@@ -199,5 +200,55 @@ describe("AMM markets", () => {
   it("pays half a unit per share on a void, either side", () => {
     const m = amm({ status: MarketStatus.Void, outcome: Outcome.Void });
     expect(claimablePayout(m, 4_000_000n, 2_000_000n)).toBe(3_000_000n);
+  });
+});
+
+
+/**
+ * Which markets the board is for.
+ *
+ * This deployment carries about twenty markets that resolved without anyone
+ * ever staking on them — flights replayed to check the provider, backtests
+ * against a feed round, markets created purely to see whether a handler fires.
+ * They are real history and they stay on chain, but they describe the testing
+ * rather than the product.
+ *
+ * The two mistakes worth guarding are opposite: hiding an OPEN market with no
+ * stakes yet, which is the one thing a visitor can act on; and keeping a
+ * resolved one that nobody ever touched.
+ */
+describe("isUnstakedAndResolved", () => {
+  const at = (status: MarketStatus, yes: bigint, no: bigint): Market =>
+    ({ ...crypto0, status, yesPool: yes, noPool: no }) as Market;
+
+  it("hides a settled market nobody staked on", () => {
+    expect(isUnstakedAndResolved(at(MarketStatus.Settled, 0n, 0n))).toBe(true);
+  });
+
+  it("hides a voided market nobody staked on", () => {
+    expect(isUnstakedAndResolved(at(MarketStatus.Void, 0n, 0n))).toBe(true);
+  });
+
+  it("keeps an OPEN market with no stakes — that is an invitation, not a test", () => {
+    expect(isUnstakedAndResolved(at(MarketStatus.Open, 0n, 0n))).toBe(false);
+    expect(isUnstakedAndResolved(at(MarketStatus.Locked, 0n, 0n))).toBe(false);
+    expect(isUnstakedAndResolved(at(MarketStatus.SettlementRequested, 0n, 0n))).toBe(false);
+  });
+
+  it("keeps a resolved market that anyone staked on, on either side", () => {
+    expect(isUnstakedAndResolved(at(MarketStatus.Settled, 1n, 0n))).toBe(false);
+    expect(isUnstakedAndResolved(at(MarketStatus.Void, 0n, 1n))).toBe(false);
+  });
+
+  /**
+   * An AMM market holds no pools — its money is `collateral`, and reading
+   * yes/no would call a live ladder unstaked. `totalPool` already knows this,
+   * which is why the check goes through it rather than adding the two fields.
+   */
+  it("measures an AMM market by its collateral, not by pools", () => {
+    const seeded = { ...amm0, status: MarketStatus.Settled, collateral: 40_000_000n } as Market;
+    const empty = { ...amm0, status: MarketStatus.Settled, collateral: 0n } as Market;
+    expect(isUnstakedAndResolved(seeded)).toBe(false);
+    expect(isUnstakedAndResolved(empty)).toBe(true);
   });
 });

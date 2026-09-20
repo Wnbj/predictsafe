@@ -35,6 +35,18 @@ export function Live({
   const waiting = inFlight(feed);
   const done = history(feed);
   const rejected = feed.attempts.filter((a) => a.state === "rejected").length;
+  /**
+   * Counted explicitly rather than as `done.length`.
+   *
+   * `history` means "resolved", which now includes a market voided by the
+   * owner with no settlement log behind it. Those belong in the table — they
+   * are over, and hiding them would lose the row — but calling them settled
+   * would count a settlement that never happened, on the one card whose whole
+   * job is to say how many did.
+   */
+  const settledCount = feed.attempts.filter(
+    (a) => a.state === "settled" || a.state === "settled-unattested" || a.state === "paid",
+  ).length;
 
   return (
     <div className="page">
@@ -56,7 +68,7 @@ export function Live({
           </div>
         </SummaryCard>
         <SummaryCard label="In flight" value={String(waiting.length)} />
-        <SummaryCard label="Settled" value={String(done.length)} />
+        <SummaryCard label="Settled" value={String(settledCount)} />
         <SummaryCard
           label="Refused"
           value={String(rejected)}
@@ -181,6 +193,7 @@ const STATE_COPY: Record<PipelineState, string> = {
   rejected: "Report refused",
   settled: "Settled",
   "settled-unattested": "Settled",
+  abandoned: "Voided without a settlement",
   paid: "Settled and paid",
 };
 
@@ -441,6 +454,17 @@ function HistoryRow({ attempt }: { attempt: Attempt }) {
         {attempt.report ? (
           <span style={{ color: attempt.report.accepted ? undefined : "var(--color-negative)" }}>
             {attempt.report.accepted ? "accepted" : "refused"}
+          </span>
+        ) : attempt.state === "abandoned" ? (
+          /*
+           * Not "not in range". That phrase means a forwarder log probably
+           * exists and this scan did not reach it — a shrug. Here the market
+           * was voided on chain by a call that emits nothing, so no report was
+           * ever accepted and none is coming. Saying the two the same way
+           * would let a real gap in the scan hide behind a resolved market.
+           */
+          <span className="muted" title="Status is Void on chain with no settlement log behind it — `ownerVoid` emits nothing.">
+            none — voided
           </span>
         ) : (
           <span className="muted" title="No forwarder log in the scanned range — not a failure.">

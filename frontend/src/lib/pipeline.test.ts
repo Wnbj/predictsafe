@@ -7,7 +7,7 @@ import type {
   SettledLog,
   SettlementLog,
 } from "./settlementEvents";
-import { Outcome, type LpEvent, type Market } from "./types";
+import { MarketStatus, Outcome, type LpEvent, type Market } from "./types";
 import { amm0, crypto0, flight0 } from "./fixtures";
 import { CRYPTO_MARKET_ADDRESS, AMM_MARKET_ADDRESS,
   attestationFor,
@@ -409,5 +409,58 @@ describe("inFlight / history", () => {
 
     expect(inFlight(p).map((a) => a.marketKey)).toEqual([crypto0.key]);
     expect(history(p).map((a) => a.marketKey)).toEqual([amm0.key]);
+  });
+});
+
+
+/**
+ * The one case where the logs cannot see the whole truth.
+ *
+ * `ownerVoid` is the POC escape hatch on every market contract: it writes
+ * `Status.Void` and emits nothing at all. A pipeline built from logs alone
+ * therefore keeps such a market at the top of the page reading "waiting for a
+ * report" for ever — which is the single thing a live page must never do,
+ * claim something is in progress when it is over.
+ *
+ * The fix reads `market.status`, and only ever to move an attempt OUT of
+ * flight. These tests pin that narrowness: it must not invent a settlement,
+ * and it must not touch a market that really is still waiting.
+ */
+describe("a market voided with no settlement log", () => {
+  const voided: Market = { ...flight0, status: MarketStatus.Void };
+  const waiting: Market = { ...flight0, status: MarketStatus.SettlementRequested };
+
+  it("stops claiming the market is in flight", () => {
+    const { attempts } = buildPipelines([voided], [requested(flight0.key, 100n)]);
+    expect(attempts[0]!.state).toBe("abandoned");
+  });
+
+  it("leaves it out of the in-flight list and puts it in history", () => {
+    const p = buildPipelines([voided], [requested(flight0.key, 100n)]);
+    expect(inFlight(p)).toHaveLength(0);
+    expect(history(p)).toHaveLength(1);
+  });
+
+  it("invents no settlement — there is none to show", () => {
+    const { attempts } = buildPipelines([voided], [requested(flight0.key, 100n)]);
+    expect(attempts[0]!.settled).toBeNull();
+    expect(attempts[0]!.report).toBeNull();
+  });
+
+  it("still shows a market that is genuinely awaiting settlement", () => {
+    const p = buildPipelines([waiting], [requested(flight0.key, 100n)]);
+    expect(p.attempts[0]!.state).toBe("in-flight");
+    expect(inFlight(p)).toHaveLength(1);
+  });
+
+  /**
+   * A refusal outranks it. The market being Void afterwards does not erase
+   * the fact that a delivery was attempted and rejected — that is the whole
+   * reason this module reads forwarder logs at all.
+   */
+  it("does not bury a refused report", () => {
+    const r = report(flight0.contract, "flights", false, 110n);
+    const p = buildPipelines([voided], [requested(flight0.key, 100n), r]);
+    expect(p.attempts[0]!.state).toBe("rejected");
   });
 });
