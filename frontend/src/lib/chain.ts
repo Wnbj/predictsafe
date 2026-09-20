@@ -38,7 +38,28 @@ import {
 
 export const publicClient = createPublicClient({
   chain,
-  transport: http(RPC_URL),
+  /*
+   * Retries configured rather than left to chance, because a cold log scan is
+   * a few hundred requests and every endpoint measured refuses some of them.
+   * Infura answers HTTP 429 `Too Many Requests` after about ten in quick
+   * succession — a clean, documented limit, unlike the public node, which
+   * simply fails a fraction of identical queries with no pattern. A refusal
+   * that is retried costs a few hundred milliseconds; one that is not loses a
+   * whole family of logs for that poll.
+   */
+  transport: http(RPC_URL, {
+    retryCount: 5,
+    retryDelay: 400,
+    /*
+     * JSON-RPC batching. Reading the markets is dozens of `eth_call`s — core
+     * and terms for every market across five contracts — and sent one per
+     * request they exhausted the rate budget that the log scan was already
+     * using, leaving the app stuck on "Loading markets from Sepolia…" while
+     * the feed behind it had finished. Batched, they cost a handful of
+     * requests instead.
+     */
+    batch: true,
+  }),
 });
 
 /**
@@ -672,7 +693,14 @@ export async function logsInChunks<T>(
   fromBlock: bigint = DEPLOY_BLOCK,
 ): Promise<T[]> {
   const latest = await publicClient.getBlockNumber();
-  const STEP = 45_000n;
+  /*
+   * 10,000 is Infura's hard cap — it answers `range N exceeds limit of 10000`
+   * above it, measured 2026-09-20. The public node accepted 45,000, which is
+   * why this used to be larger; that endpoint is no longer reliable enough to
+   * size against. Smaller chunks mean more requests, which is what the pacing
+   * and the cache above are for.
+   */
+  const STEP = 10_000n;
   const out: T[] = [];
   // A caller may hand us a cursor ahead of the head this node reports — the
   // same load-balancer skew described above, seen from the other side. One
