@@ -52,13 +52,12 @@ guessing.
                     │  forwarder + author + name checks    │
                     └──────────────┬───────────────────────┘
                                    ▼
-        ┌────────────────────┬─────────────┬────────────────┐
-        │ ParimutuelMarket   │ AmmMarket   │  MockUSDC      │
-        │  ├ FlightMarket    │ (constant   │  (shared stake │
-        │  ├ CryptoMarket    │  product)   │   token)       │
-        │  ├ StockMarket     │             │                │
-        │  └ ReserveMarket   │             │                │
-        └────────────────────┴─────────────┴────────────────┘
+   ┌──────────────┬────────────────────┬─────────────┬──────────────┐
+   │ FlightMarket │ ParimutuelMarket   │ AmmMarket   │  MockUSDC    │
+   │ (standalone, │  ├ CryptoMarket    │ (constant   │ (shared      │
+   │  predates    │  ├ StockMarket     │  product)   │  stake       │
+   │  the base)   │  └ ReserveMarket   │             │  token)      │
+   └──────────────┴────────────────────┴─────────────┴──────────────┘
                                    ▲
                                    │ viem, EIP-6963
                     ┌──────────────┴───────────────────────┐
@@ -76,6 +75,13 @@ guessing.
 | ReserveMarket | `0xa768Be2741A0464b81606649eCa45bfF7aD4d939` |
 | AmmMarket | `0xc9961096dc98eE17eD28bB417BB726F1b64f84FF` |
 | MockUSDC | `0xcd123a8d74ef062dddd2287e87bc88eb3b208b54` |
+
+**All five settle through a real DON** — ten nodes, the production
+KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
+family has been proven by reading `ReportProcessed(result = true)` off a
+settlement receipt rather than trusting the CLI. A cron sweep runs every thirty
+minutes and has done so unattended since 2026-09-20 without a single failed
+execution.
 
 ---
 
@@ -166,6 +172,49 @@ A ladder is N markets sharing an asset and an expiry and differing only in
 strike, so the UI groups them from exactly that. No contract change was needed,
 and it works retroactively on ladders created before the code existed.
 
+### Ten nodes against a rate limit that tolerates one
+
+A DON reaches consensus over an HTTP read by having **every node make the
+call**. The flight provider is a free RapidAPI tier, and the first settlement
+on the real DON got one answer and nine HTTP 429s in the same second — nine
+errors is more than the network tolerates, so the market voided.
+
+The shape of that failure was the clue. An exhausted quota would have failed
+all ten; one success meant the key was fine and the limit was about
+*simultaneity*. So each node now waits a random time before every attempt —
+full jitter over a doubling window, including the first attempt, because t=0
+is the one moment all ten are guaranteed to arrive together. A fixed backoff
+would only move the collision. Four consecutive runs afterwards: ten of ten
+nodes every time, forty calls in ten minutes, zero refusals.
+
+This varies *when* a node calls, never what it answers, so it does not touch
+consensus.
+
+### Read the chain once, not twenty times
+
+The live view is built from logs, and every decoder used to fetch its own:
+fourteen separate walks of a quarter of a million blocks, about 520 requests
+for one page load, which no free RPC would serve. `eth_getLogs` takes an array
+of addresses, and these contracts emit nothing the app does not want — so one
+query per chunk returns everything and the decoders sort it by topic0
+afterwards. Two queries, in fact: forwarder logs keep an indexed filter,
+because other people's workflows share that forwarder.
+
+The trap in sorting by topic0 rather than by event name: `FlightMarket` and the
+other four both emit an event called `Settled`, one with an `int32` and one
+with an `int256`. Same name, same indexed argument. Matching on the name would
+decode a flight's delay through the wrong ABI and produce a plausible number.
+
+### The SDK's types promise more than its runtime has
+
+`@chainlink/cre-sdk` declares a `randomSeed()` global with a docstring. It
+typechecks. It does not exist at runtime — a host binding for the SDK itself,
+not part of the workflow sandbox. `setTimeout` at least announces that it is
+unavailable; this does not. A `typeof` sweep from inside a running handler
+found `sleep`, `Math.random` and `Date.now`, which is what the jittered retry
+uses instead. A typecheck proves someone wrote a declaration, not that the host
+implements it.
+
 ---
 
 ## Running it
@@ -173,15 +222,20 @@ and it works retroactively on ladders created before the code existed.
 Nothing is on the default PATH:
 
 ```bash
-export PATH="$HOME/.local/share/cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
+export PATH="$HOME/.cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
 ```
 
 ```bash
 cd contracts && forge test                     # 170 tests
-cd frontend  && bun install && bun run test    # 142 tests
+cd frontend  && bun install && bun run test    # 157 tests
 cd frontend  && bun run dev                    # the app, against live Sepolia
-cd cre/settlement && bun test # 35 tests
+cd cre/settlement && bun test                  # 55 tests
 ```
+
+The app needs an RPC that serves `eth_getLogs` over a 10,000-block range. The
+public node's default works but is unreliable for log scans; a free Infura key
+in `frontend/.env.local` as `VITE_RPC_URL` is what the app is sized for. See
+RUNBOOK for why Alchemy's and QuickNode's free tiers do not work at all.
 
 Settling a market end to end, deploying the contracts, and every operational
 detail lives in **[RUNBOOK.md](RUNBOOK.md)** — including the two settings
@@ -195,21 +249,18 @@ suggests, and which cost an afternoon to find.
 Stated plainly, because a POC that hides these is worse than one that does not
 have them.
 
-- **Deploy access is not enabled for this account.** The workflow has never run
-  on a real DON. Everything is exercised through `cre workflow simulate
-  --broadcast`, which runs the logic locally and submits the resulting write for
-  real — so the on-chain half is genuine and the *consensus* half is not.
-  Requested 2026-08-14, still pending.
-- **Nothing settles unattended.** A CRE workflow's only on-chain write is a
-  signed report, so it cannot call `requestSettlement()` itself. Full autonomy
-  needs `_processReport` to accept any market past its settle-after time,
-  dropping the request step.
-- **The provider API key sits in workflow config in the clear.** Config is
-  handed to the DON, so node operators can read it. The code path for
-  `runtime.getSecret()` is written but not activated: the secrets registry is a
-  **mainnet** contract, so using it costs real gas.
+- **A market still has to be asked to settle.** A CRE workflow's only on-chain
+  write is a signed report, so it cannot call `requestSettlement()` itself —
+  someone presses the button, or calls it. Everything AFTER that is unattended:
+  the DON settles within seconds, and a cron sweep every thirty minutes
+  re-settles anything the log trigger missed. Full autonomy needs
+  `_processReport` to accept any market past its settle-after time, dropping
+  the request step.
 - **One flight data provider.** The two-source disagreement logic is built and
-  tested, but the second slot was only ever exercised with a mock.
+  tested, but the second slot was only ever exercised with a mock. The
+  provider is a free RapidAPI tier, which works on a ten-node DON only because
+  of the jittered retry described above — a stricter limit could break it.
+- **The RPC is a free tier.** The app is sized to fit it, not to have headroom.
 - **AMM liquidity can only be withdrawn after settlement.** Providers may
   deposit while a market is open, but there is no remove-while-open: taking
   liquidity out of a live book is where the silent mistakes are, and the
@@ -217,6 +268,9 @@ have them.
 - **`FlightMarket` predates `ParimutuelMarket`** and does not inherit it. It is
   deployed with live positions, so the parimutuel logic exists in two places
   until it is next redeployed.
+- **`ownerVoid` exists on every market.** An escape hatch for a POC, and it
+  emits no event, which the live view has to account for separately. It should
+  not survive into anything real.
 - Not audited. Not for real money.
 
 ---
@@ -224,18 +278,13 @@ have them.
 ## A note on names
 
 `cre/settlement/` used to be `flight-market/flight-settlement/`, from when
-flights were the only category. The directories are renamed; the **workflow
-name is not**, and deliberately.
+flights were the only category. The workflow was deployed to the DON as
+`predictsafe-settlement`, and every contract was switched to expect that name
+at the same time as its forwarder.
 
-`workflow-name: "flight-settlement-staging"` is not a label. A fingerprint of
-it — `sha256(name)`, hex-encoded, first ten characters, those characters stored
-as `bytes10` — sits in every deployed contract and is checked on
-every report, so renaming it makes all five contracts reject every settlement —
-silently, because the forwarder swallows a failed receiver call into an event
-rather than reverting. It can be changed with five owner calls to
-`setExpectedWorkflowName`, and will be whenever the contracts are next
-redeployed. Doing it for tidiness alone would risk the one failure mode in this
-system that is hardest to see.
-
-The repository URL is likewise unchanged while the deploy-access request that
-cites it is still open.
+The name is not a label. A fingerprint of it — `sha256(name)`, hex-encoded,
+first ten characters, those characters stored as `bytes10` — sits in every
+contract and is checked on every report. A contract expecting the wrong name
+rejects every settlement **silently**, because the forwarder swallows a failed
+receiver call into an event rather than reverting. `cre/preflight.sh
+production` checks it, with the author and forwarder, on all five contracts.

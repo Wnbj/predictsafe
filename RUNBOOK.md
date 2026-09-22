@@ -1,5 +1,19 @@
 # PredictSafe — POC runbook
 
+**Current state, 2026-09-22.** All five receivers settle through a real
+ten-node DON under the workflow `predictsafe-settlement`, via the production
+KeystoneForwarder `0xF8344CFd…4482`. The provider key is in the Vault DON. A
+cron sweep runs every thirty minutes and has run unattended since 2026-09-20
+without a failed execution. `cre/preflight.sh production` checks all fifteen
+bindings in one command.
+
+Much of what follows was written while settlement ran through `cre workflow
+simulate --broadcast` on this machine. That path is **retired** — see "The
+local settlement path is retired" — but the sections are kept, because the
+measurements in them are what the current design rests on.
+
+What was proven first, in August, before any of that:
+
 End-to-end settlement (real Sepolia log trigger → CRE workflow → real
 `onReport()` write → real `claim()` payout, all verified via on-chain state,
 not just CLI output) is **proven**. `FlightMarket.sol` inherits
@@ -844,35 +858,60 @@ record anywhere. The same request 6 minutes later fired in 4 seconds. A log
 trigger that was not yet registered when the log was mined misses it
 permanently; waiting afterwards does not recover it.
 
-## Secrets: the API key is currently in the clear
+## Secrets: the provider key lives in the Vault DON
 
-`config.staging.json` carries the RapidAPI key as plaintext. That file is
-gitignored, but the config is **handed to the DON**, so every node operator
-running this workflow can read the key. Fine for a POC on a free tier; not
-fine for anything with a bill attached.
+The RapidAPI key is NOT in any config the DON receives. `config.production.json`
+carries `apiKey: ""` and `apiKeySecretId: "AERODATABOX_API_KEY"`, and
+`resolveApiKey` in `main.ts` asks the Vault DON for it at execution time.
+Switched on and proven 2026-09-18: flight market 9 returned the identical
+answer on the Vault path that market 3 had returned on the plaintext key ten
+minutes earlier — one variable changed and the answer did not.
 
-The SDK has the fix: `runtime.getSecret({ id, namespace })` resolves a value
-from the Vault DON, so it never appears in config. `resolveApiKey` in `main.ts`
-uses it when `apiKeySecretId` is set and falls back to `apiKey` otherwise, so
-the existing verified path is untouched until the secret exists.
+Three files, and only one holds the value:
 
-**It has not been exercised, and activating it is not free.** `cre secrets list`
-fails with:
+| file | holds | tracked |
+|---|---|---|
+| `cre/secrets.yaml` | the id → env-var NAME mapping | yes |
+| `cre/.env` | `CRE_SECRET_AERODATABOX_KEY=<value>` | **no** |
+| `cre/settlement/config.*.json` | `apiKeySecretId`, and `apiKey` left empty | production: yes |
 
+To upload or rotate, from `cre/`, in a real terminal:
+
+```bash
+cre secrets create secrets.yaml --secrets-auth browser --target production-settings
+cre secrets list --secrets-auth browser --target production-settings
 ```
-failed to create workflow registry client: failed to create client for chain
-"ethereum-mainnet": rpc url not found for chain ethereum-mainnet
-```
 
-The workflow/secrets registry lives on **Ethereum mainnet**. Using it needs a
-mainnet RPC in `project.yaml`, and `cre secrets create` is a real mainnet
-transaction that uploads the key to the Vault DON — real gas, and a credential
-leaving this machine. Both are decisions for the account owner, so the code
-path is in place and the upload is deliberately not done.
+Use `update` instead of `create` to rotate an existing id.
 
-A further step after that is the **confidential HTTP** capability
+**`--secrets-auth browser` is not optional, and this cost a month.** The CLI
+defaults to `onchain`, which is the on-chain registry: it needs a mainnet RPC
+and a real mainnet transaction, and this file used to say that the Vault was
+therefore expensive and deliberately left off. That was the wrong registry.
+This project's workflows use `deployment-registry: "private"`, which
+authenticates by **account, not wallet** — `browser` mode — and costs nothing.
+
+Two things that look like permission problems and are not:
+
+- **It needs a real TTY**, because sign-in opens a browser. From a
+  non-interactive shell it fails with `could not open a new TTY`.
+- **It needs an `ethereum-mainnet` RPC in `project.yaml`** even so — read-only,
+  no gas. The CLI verifies the gateway's encryption key and signatures against
+  mainnet rather than trusting the gateway about itself. Both targets carry
+  one.
+
+The owner the Vault stamps on the secret is **`0x10C71fFb…1379`**, the
+account-derived address — the same one the DON presents as `workflowOwner` and
+the contracts expect as author. Not the wallet in `CRE_ETH_PRIVATE_KEY`.
+`cre account list-key` still says "No linked owners found"; the account path and
+the linked-wallet path are different things.
+
+**The simulator resolves Vault secrets itself**, so `cre workflow simulate`
+(without `--broadcast`) exercises the real secret path locally.
+
+A further step is the **confidential HTTP** capability
 (`networking/confidentialhttp`), which templates the secret into the request on
-the node rather than passing it through workflow memory as a string.
+the node rather than passing it through workflow memory as a string. Not done.
 
 ## Reserve markets (Proof of Reserve / fund NAV)
 
@@ -1113,8 +1152,8 @@ there is no event title on chain.
 | suite | count | command |
 |---|---|---|
 | contracts | 170 | `cd contracts && forge test` |
-| frontend | 142 | `cd frontend && bun run test` |
-| workflow | 35 | `cd cre/settlement && bun test` |
+| frontend | 157 | `cd frontend && bun run test` |
+| workflow | 55 | `cd cre/settlement && bun test` |
 
 The frontend and workflow suites were added after a routing bug reached a
 user: writes branched on `categoryId` with the flight contract as the else, so
@@ -1142,13 +1181,10 @@ anvil --fork-url https://ethereum-sepolia-rpc.publicnode.com --port 8545
 
 ## Known gaps
 
-- **Deploy access is not enabled for this account**, so the workflow itself has
-  never been registered with a real Chainlink DON via `cre workflow deploy`.
-  Everything above runs through `cre workflow simulate`, which executes the
-  workflow logic locally and (with `--broadcast`) submits the resulting write
-  for real — but there is no live DON reaching consensus across independent
-  nodes. The `FORWARDER`/`WORKFLOW_AUTHOR` values above are specific to this
-  local-CLI-broadcast path and will need to change once a real DON is involved.
+- **A market still has to be asked to settle.** A workflow's only on-chain
+  write is a signed report, so it cannot call `requestSettlement()`. Everything
+  after the request is unattended — the log trigger settles within seconds and
+  the thirty-minute sweep re-settles anything it missed.
 - `project.yaml` staging RPC points at `https://ethereum-sepolia-rpc.publicnode.com`
   (real Sepolia). Swap to a local anvil fork URL if rehearsing for free (see
   Appendix).
@@ -1164,12 +1200,11 @@ anvil --fork-url https://ethereum-sepolia-rpc.publicnode.com --port 8545
   free tier is HTTP-only, which CRE rejects; FlightLabs' free allowance is ~50
   requests; FlightAware is paid).
 - **Rate limits are per-second on the free plan**, and a real DON multiplies
-  every settlement by its node count. A production deployment would need a
-  paid tier sized to the DON, or a caching layer in front of the provider.
-- **Short-horizon crypto markets are impractical without deploy access.** A
-  5-minute market wants settling seconds after expiry; every settlement is
-  currently a hand-run command. Longer horizons are the usable ones until the
-  workflow runs on a real DON.
+  every settlement by its node count — ten calls in the same second, nine of
+  them refused, the first time it ran. The jittered retry in
+  `sendSpreadOverNodes` fixed it on the current tier (see "Flights on the
+  DON"), but that is a fit, not a margin: a stricter limit, or a larger DON,
+  could break it again.
 - **FlightMarket does not inherit `ParimutuelMarket`.** The shared base was
   extracted from it, and `CryptoMarket` uses it, but the flight contract is
   already deployed with live positions and is wired into the frontend by its
