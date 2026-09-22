@@ -57,6 +57,21 @@ function persist(): void {
   }
 }
 
+/**
+ * Add timestamps from the shipped log snapshot. Never overwrites: a mined
+ * block's time cannot change, so whichever copy arrived first is right.
+ */
+export function seedBlockTimes(entries: Iterable<[bigint, number]>): void {
+  let added = false;
+  for (const [block, time] of entries) {
+    if (!cache.has(block)) {
+      cache.set(block, time);
+      added = true;
+    }
+  }
+  if (added) persist();
+}
+
 /** Blocks already known. Safe to read every render. */
 export function knownBlockTimes(): ReadonlyMap<bigint, number> {
   return cache;

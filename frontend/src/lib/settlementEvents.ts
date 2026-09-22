@@ -1,20 +1,11 @@
 import { parseAbiItem, parseEventLogs, type AbiEvent } from "viem";
 import { marketKey } from "./chain";
-import {
-  categoryOf,
-  REPORT_PROCESSED_EVENT,
-  syncLogs,
-  type LogSource,
-  type RawLog,
-} from "./logScan";
+import { REPORT_PROCESSED_EVENT } from "./forwarderEvent";
+import { categoryOf, syncLogs, type LogSource, type RawLog } from "./logScan";
 import type { CategoryId } from "./types";
 
-export {
-  categoryOf,
-  CONTRACT_CATEGORY,
-  RECEIVER_ADDRESSES,
-  REPORT_PROCESSED_EVENT,
-} from "./logScan";
+export { categoryOf, CONTRACT_CATEGORY, RECEIVER_ADDRESSES } from "./logScan";
+export { REPORT_PROCESSED_EVENT } from "./forwarderEvent";
 
 /**
  * Every log a settlement leaves behind, decoded in one place.

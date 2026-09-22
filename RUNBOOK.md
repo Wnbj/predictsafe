@@ -31,6 +31,38 @@ No, Void) with two independent stakers, then both claimed:
 Contract's MockUSDC balance after all four claims: **0** — fully drained, no
 dust. Numbers match the parimutuel math exactly.
 
+## Before a demo
+
+Four commands, about five minutes, and each one guards a failure that has
+actually happened.
+
+```bash
+cd frontend && bun run snapshot                      # refresh shipped history
+cd cre && ./preflight.sh production                  # 15 green rows
+cre execution list predictsafe-settlement --status FAILURE   # expect none
+cd frontend && bun run build                         # ships public/ too
+```
+
+**Why the snapshot matters most.** A first visit used to walk the whole chain
+from the deploy block — 28 chunks, two queries each — and on the free RPC that
+is exactly where the rate limit bites. Measured 2026-09-22: 142 HTTP 429s in
+the first 171 requests, and about two minutes of four red "could not be read"
+banners over "Settled 0" before a retry got through. With the snapshot the same
+cold load drew 37 requests and showed all 40 settlements, timed, within fifteen
+seconds.
+
+`bun run snapshot` scans with the app's own `syncLogs`, refuses to write if any
+range failed, stops 64 blocks short of the head so no reorg can reach it, and
+redacts the RPC key out of any error it prints — viem puts the full request URL
+in its messages, and an Infura URL carries the key in its path. It retries up
+to three times with a ninety-second pause, because the free tier's limit
+recovers in about two minutes. A stale snapshot is never wrong, only slower:
+each 10,000 blocks behind costs a first visit two more requests.
+
+**Every open tab spends the same budget.** The live view polls every six
+seconds against the one key in `.env.local`. Close the ones you are not
+showing.
+
 ## Toolchain
 
 None of these are on the default PATH:
@@ -1152,7 +1184,7 @@ there is no event title on chain.
 | suite | count | command |
 |---|---|---|
 | contracts | 170 | `cd contracts && forge test` |
-| frontend | 157 | `cd frontend && bun run test` |
+| frontend | 164 | `cd frontend && bun run test` |
 | workflow | 55 | `cd cre/settlement && bun test` |
 
 The frontend and workflow suites were added after a routing bug reached a

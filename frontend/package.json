@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "snapshot": "bun scripts/snapshot-logs.ts"
   },
   "dependencies": {
     "react": "18.3.1",

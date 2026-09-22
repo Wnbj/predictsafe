@@ -32,19 +32,17 @@ const VERSION = 2;
  * address starts from nothing rather than serving the previous deployment's
  * logs under new ids.
  */
-const KEY = [
-  "predictsafe.logcache",
-  VERSION,
-  [
-    FLIGHT_MARKET_ADDRESS,
-    CRYPTO_MARKET_ADDRESS,
-    STOCK_MARKET_ADDRESS,
-    RESERVE_MARKET_ADDRESS,
-    AMM_MARKET_ADDRESS,
-  ]
-    .join(",")
-    .toLowerCase(),
-].join(":");
+export const CONTRACTS_FINGERPRINT = [
+  FLIGHT_MARKET_ADDRESS,
+  CRYPTO_MARKET_ADDRESS,
+  STOCK_MARKET_ADDRESS,
+  RESERVE_MARKET_ADDRESS,
+  AMM_MARKET_ADDRESS,
+]
+  .join(",")
+  .toLowerCase();
+
+const KEY = ["predictsafe.logcache", VERSION, CONTRACTS_FINGERPRINT].join(":");
 
 export interface CachedScan {
   /** The cursor to resume from. Already includes the scan's overlap. */
@@ -54,8 +52,9 @@ export interface CachedScan {
 }
 
 /** `JSON.stringify` cannot carry a bigint, and every block number is one. */
-const replacer = (_k: string, v: unknown) => (typeof v === "bigint" ? `${v}#bigint` : v);
-const reviver = (_k: string, v: unknown) =>
+export const bigintReplacer = (_k: string, v: unknown) =>
+  typeof v === "bigint" ? `${v}#bigint` : v;
+export const bigintReviver = (_k: string, v: unknown) =>
   typeof v === "string" && v.endsWith("#bigint") ? BigInt(v.slice(0, -7)) : v;
 
 /**
@@ -69,7 +68,7 @@ export function loadCache(): CachedScan | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw, reviver) as CachedScan;
+    const parsed = JSON.parse(raw, bigintReviver) as CachedScan;
     if (typeof parsed?.cursor !== "bigint") return null;
     if (!Array.isArray(parsed.receiver) || !Array.isArray(parsed.forwarder)) return null;
     // A cursor before the deploy block saves nothing and hides a bug.
@@ -82,7 +81,7 @@ export function loadCache(): CachedScan | null {
 
 export function saveCache(cursor: bigint, receiver: RawLog[], forwarder: RawLog[]): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ cursor, receiver, forwarder }, replacer));
+    localStorage.setItem(KEY, JSON.stringify({ cursor, receiver, forwarder }, bigintReplacer));
   } catch {
     // Quota, private mode, or storage disabled. The scan keeps working from
     // the network; it simply starts from the deploy block next time.

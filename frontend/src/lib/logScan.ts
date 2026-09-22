@@ -1,4 +1,5 @@
-import { parseAbiItem, type Log } from "viem";
+import { type Log } from "viem";
+import { REPORT_PROCESSED_EVENT } from "./forwarderEvent";
 import {
   AMM_MARKET_ADDRESS,
   CRYPTO_MARKET_ADDRESS,
@@ -9,7 +10,13 @@ import {
   STOCK_MARKET_ADDRESS,
 } from "./config";
 import { publicClient } from "./chain";
-import { loadCache, saveCache } from "./logCache";
+import {
+  bigintReviver,
+  CONTRACTS_FINGERPRINT,
+  loadCache,
+  saveCache,
+} from "./logCache";
+import { seedBlockTimes } from "./blockTime";
 import type { CategoryId } from "./types";
 
 /**
@@ -37,16 +44,7 @@ import type { CategoryId } from "./types";
 
 // --- signatures -------------------------------------------------------------
 
-/**
- * Verified by hash against a real receipt rather than taken from documentation:
- * topic0 is 0x3617b009e9785c42daebadb6d3fb553243a4bf586d07ea72d65d80013ce116b5.
- * The hash pins the TYPES only — the RUNBOOK calls the bool both `success` and
- * `result`, and nothing on chain settles which name is right. `result` is what
- * the upstream KeystoneForwarder declares.
- */
-export const REPORT_PROCESSED_EVENT = parseAbiItem(
-  "event ReportProcessed(address indexed receiver, bytes32 indexed workflowExecutionId, bytes2 indexed reportId, bool result)",
-);
+export { REPORT_PROCESSED_EVENT } from "./forwarderEvent";
 
 // --- which contract is which -----------------------------------------------
 
@@ -189,6 +187,93 @@ let cursor: bigint | null = restored?.cursor ?? null;
  */
 let inFlight: Promise<LogScan> | null = null;
 
+// --- the shipped snapshot ---------------------------------------------------
+
+/**
+ * History the app ships with, so a first visit does not walk the chain.
+ *
+ * WHY. Everything before a recent block is immutable, yet a first visit —
+ * nothing in localStorage — walked all of it: 28 chunks of 10,000 blocks, two
+ * queries each, before a single settlement could be drawn. On the free RPC
+ * that is where the rate limit bites. Measured 2026-09-22: a cold load of
+ * `/live` drew 142 HTTP 429s in its first 171 requests, and for about two
+ * minutes the page showed four red "could not be read" banners and "Settled 0"
+ * before a retry got through. The same code had loaded cleanly the night
+ * before; the difference was the endpoint's mood. On a demo, that is the first
+ * impression.
+ *
+ * So `scripts/snapshot-logs.ts` runs the SAME `syncLogs` against the chain once,
+ * and writes what it read to `public/`. A first visit seeds the store from that
+ * and scans only the tail. Nothing is trusted that the chain did not say: the
+ * file holds raw logs exactly as a node returned them, and the tail after it is
+ * read live on every visit like any other poll.
+ *
+ * A snapshot that is out of date costs a longer tail, never a wrong answer. One
+ * made for other contracts is refused by the fingerprint, as the cache is.
+ */
+export const SNAPSHOT_URL = "/logs-snapshot.json";
+const SNAPSHOT_VERSION = 1;
+
+export interface LogSnapshot {
+  /** Highest block the snapshot vouches for. The live scan resumes before it. */
+  head: bigint;
+  receiver: RawLog[];
+  forwarder: RawLog[];
+  /** Timestamps for the blocks the pipeline renders, which cannot change. */
+  blockTimes: [bigint, number][];
+}
+
+/**
+ * Validate a snapshot file, or return null. Pure, so the refusals are testable.
+ *
+ * Every rejection is silent and total: a snapshot is an optimisation, and one
+ * that is malformed, from another version, or made for other contracts must
+ * cost exactly what not having it costs — a full scan — and nothing more.
+ */
+export function parseSnapshot(text: string, fingerprint = CONTRACTS_FINGERPRINT): LogSnapshot | null {
+  try {
+    const raw = JSON.parse(text, bigintReviver) as Record<string, unknown>;
+    if (raw?.version !== SNAPSHOT_VERSION) return null;
+    if (raw.contracts !== fingerprint) return null;
+    if (typeof raw.head !== "bigint" || raw.head < DEPLOY_BLOCK) return null;
+    if (!Array.isArray(raw.receiver) || !Array.isArray(raw.forwarder)) return null;
+    const times = Array.isArray(raw.blockTimes) ? raw.blockTimes : [];
+    return {
+      head: raw.head,
+      receiver: raw.receiver as RawLog[],
+      forwarder: raw.forwarder as RawLog[],
+      blockTimes: times.flatMap((e): [bigint, number][] =>
+        Array.isArray(e) && typeof e[0] === "bigint" && typeof e[1] === "number" ? [[e[0], e[1]]] : [],
+      ),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Seed the store from the shipped snapshot, once, on a first visit.
+ *
+ * Only in a browser. The snapshot script runs this module under bun to PRODUCE
+ * the file, and a snapshot built from the previous snapshot would be one that
+ * nobody ever checked against the chain.
+ */
+async function seedFromSnapshot(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const res = await fetch(SNAPSHOT_URL);
+    if (!res.ok) return;
+    const snap = parseSnapshot(await res.text());
+    if (!snap) return;
+    absorb(receiverStore, snap.receiver);
+    absorb(forwarderStore, snap.forwarder);
+    seedBlockTimes(snap.blockTimes);
+    cursor = snap.head > OVERLAP ? snap.head - OVERLAP : 0n;
+  } catch {
+    // Network error, missing file, bad JSON: fall through to a full scan.
+  }
+}
+
 /** Only for tests: forget everything read so far. */
 export function resetLogScan(): void {
   receiverStore.clear();
@@ -217,6 +302,10 @@ function snapshot(head: bigint, failures: { source: LogSource; message: string }
 export async function syncLogs(): Promise<LogScan> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
+    // A first visit starts from the shipped snapshot rather than the deploy
+    // block. Inside the shared promise, so four hooks asking at once load it
+    // once.
+    if (cursor === null) await seedFromSnapshot();
     const head = await publicClient.getBlockNumber();
     const from = cursor ?? DEPLOY_BLOCK;
     const failures: { source: LogSource; message: string }[] = [];

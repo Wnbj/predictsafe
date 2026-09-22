@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { encodeAbiParameters, encodeEventTopics, parseEventLogs, toEventSelector } from "viem";
 import { SETTLEMENT_EVENTS } from "./settlementEvents";
 import { CRYPTO_MARKET_ADDRESS, FLIGHT_MARKET_ADDRESS } from "./config";
-import type { RawLog } from "./logScan";
+import { parseSnapshot, type RawLog } from "./logScan";
+import { bigintReplacer, CONTRACTS_FINGERPRINT } from "./logCache";
+import { DEPLOY_BLOCK } from "./config";
 
 /**
  * The consolidated scan asks for EVERY log our five contracts emit, in one
@@ -118,5 +120,65 @@ describe("parseEventLogs picks by topic0, not by name", () => {
   it("ignores events it was not asked for", () => {
     const got = parseEventLogs({ abi: [SETTLEMENT_EVENTS.claimed], logs: pile });
     expect(got).toHaveLength(0);
+  });
+});
+
+
+/**
+ * The shipped snapshot.
+ *
+ * A first visit seeds the store from `public/logs-snapshot.json` and scans only
+ * the tail. That is only an optimisation if every way the file can be wrong
+ * costs exactly what not having it costs — a full scan — and never a wrong
+ * answer. These are those ways.
+ */
+describe("parseSnapshot", () => {
+  const good = {
+    version: 1,
+    contracts: CONTRACTS_FINGERPRINT,
+    head: DEPLOY_BLOCK + 250_000n,
+    receiver: [],
+    forwarder: [],
+    blockTimes: [[DEPLOY_BLOCK + 5n, 1_789_000_000]],
+  };
+  const text = (o: object) => JSON.stringify(o, bigintReplacer);
+
+  it("accepts a snapshot for these contracts and revives its bigints", () => {
+    const snap = parseSnapshot(text(good));
+    expect(snap).not.toBeNull();
+    expect(snap!.head).toBe(DEPLOY_BLOCK + 250_000n);
+    expect(snap!.blockTimes).toEqual([[DEPLOY_BLOCK + 5n, 1_789_000_000]]);
+  });
+
+  /**
+   * The one refusal that matters most. A snapshot made before a redeploy would
+   * otherwise serve the old contracts' markets under the new ones' ids.
+   */
+  it("refuses a snapshot made for other contracts", () => {
+    expect(parseSnapshot(text({ ...good, contracts: "0xdead,0xbeef" }))).toBeNull();
+  });
+
+  it("refuses another format version rather than guessing at its shape", () => {
+    expect(parseSnapshot(text({ ...good, version: 2 }))).toBeNull();
+  });
+
+  it("refuses a head before the deploy block, which would save nothing and hide a bug", () => {
+    expect(parseSnapshot(text({ ...good, head: DEPLOY_BLOCK - 1n }))).toBeNull();
+  });
+
+  it("refuses a head that is not a bigint — a plain number has lost precision", () => {
+    expect(parseSnapshot(text({ ...good, head: 11_759_846 }))).toBeNull();
+  });
+
+  it("refuses malformed JSON and missing log lists without throwing", () => {
+    expect(parseSnapshot("{not json")).toBeNull();
+    expect(parseSnapshot(text({ ...good, receiver: undefined }))).toBeNull();
+  });
+
+  it("drops malformed block times but keeps the snapshot", () => {
+    const snap = parseSnapshot(
+      text({ ...good, blockTimes: [[DEPLOY_BLOCK + 1n, 1_789_000_001], ["nope", 3], [5n]] }),
+    );
+    expect(snap!.blockTimes).toEqual([[DEPLOY_BLOCK + 1n, 1_789_000_001]]);
   });
 });
