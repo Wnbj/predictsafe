@@ -207,6 +207,7 @@ export default function App() {
               wallet={wallet}
               onOpenMarket={openMarket}
               onRefresh={data.refresh}
+              onOpenTrade={() => navigate("trade")}
             />
           )}
 

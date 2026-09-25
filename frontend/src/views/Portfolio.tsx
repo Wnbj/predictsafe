@@ -9,6 +9,7 @@ import {
   waitForTx,
 } from "../lib/chain";
 import { SummaryCard } from "../components/SummaryCard";
+import { TokenizedHoldings } from "../components/TokenizedHoldings";
 import { MarketStatus, type Market, type Position } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
@@ -26,11 +27,13 @@ export function Portfolio({
   wallet,
   onOpenMarket,
   onRefresh,
+  onOpenTrade,
 }: {
   positions: Position[];
   wallet: WalletState;
   onOpenMarket: (key: string) => void;
   onRefresh: () => Promise<void>;
+  onOpenTrade: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [claiming, setClaiming] = useState<string | null>(null);
@@ -318,6 +321,8 @@ export function Portfolio({
           </table>
         </div>
       )}
+
+      {wallet.account && <TokenizedHoldings account={wallet.account} onOpenTrade={onOpenTrade} />}
     </div>
   );
 }

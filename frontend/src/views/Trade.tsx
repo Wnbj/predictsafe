@@ -1,14 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Address } from "viem";
 import { EXCHANGE_ADDRESS, TOKEN_SYMBOL, addressUrl } from "../lib/config";
 import { formatRelative, formatToken, parseToken, shortAddress } from "../lib/format";
-import {
-  readAllowance,
-  readTokenBalance,
-  sendApprove,
-  sendMint,
-  waitForTx,
-} from "../lib/chain";
+import { sendApprove, sendMint, waitForTx } from "../lib/chain";
 import {
   ASSET_TOKEN_DECIMALS,
   canCancel,
@@ -18,7 +12,6 @@ import {
   formatFeedPrice,
   marketState,
   orderLabel,
-  readExchange,
   sendCancel,
   sendFill,
   sendPlaceBuy,
@@ -30,52 +23,23 @@ import {
   type OrderSide,
 } from "../lib/exchange";
 import type { WalletState } from "../hooks/useWallet";
+import { useExchange } from "../hooks/useExchange";
 import { parseUnits } from "viem";
 
 /**
  * The exchange page: synthetic gold and S&P 500, priced by Chainlink Data Feeds.
  *
  * It loads on its own rather than behind the markets read, because nothing
- * here depends on a market. It polls every 30 seconds while mounted — the free
- * RPC's budget is shared with every other tab — and immediately after any
- * transaction this page sends.
+ * here depends on a market. Loading and polling live in `useExchange`, shared
+ * with the portfolio.
  */
-
-const POLL_MS = 30_000;
 
 export function Trade({ wallet, onBalanceChange }: { wallet: WalletState; onBalanceChange: () => void }) {
   const account = wallet.account;
-  const [state, setState] = useState<ExchangeState | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [usdc, setUsdc] = useState<{ balance: bigint; allowance: bigint }>({ balance: 0n, allowance: 0n });
-  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
-
-  const load = useCallback(async () => {
-    try {
-      const [s, balance, allowance] = await Promise.all([
-        readExchange(account),
-        account ? readTokenBalance(account) : Promise.resolve(0n),
-        account ? readAllowance(account, EXCHANGE_ADDRESS) : Promise.resolve(0n),
-      ]);
-      setState(s);
-      setUsdc({ balance, allowance });
-      setError(null);
-    } catch (e) {
-      setError((e instanceof Error ? e.message : String(e)).split("\n")[0] ?? "read failed");
-    }
-    setNow(Math.floor(Date.now() / 1000));
-  }, [account]);
-
-  useEffect(() => {
-    void load();
-    const t = setInterval(() => {
-      if (!document.hidden) void load();
-    }, POLL_MS);
-    return () => clearInterval(t);
-  }, [load]);
+  const { state, error, usdc, now, reload } = useExchange(account);
 
   const refresh = async () => {
-    await load();
+    await reload();
     onBalanceChange();
   };
 
@@ -209,7 +173,7 @@ function AssetCard({
             color: m.moving ? "var(--color-accent-300)" : "var(--color-negative)",
           }}
         >
-          {m.moving ? "● " : "○ "}
+          {m.state === "moving" ? "● " : m.state === "paused" ? "◐ " : "○ "}
           {m.label}
         </span>
       </div>
@@ -225,7 +189,7 @@ function AssetCard({
           <> · price last changed {formatRelative(asset.lastChange.updatedAt, now)}</>
         )}
         <br />
-        New orders fill {m.moving ? m.expectedWait : "when the price moves again"}
+        New orders fill {m.expectedWait}
         {asset.balance > 0n && (
           <>
             <br />
@@ -382,9 +346,11 @@ function OrderPanel({
       </div>
 
       <p className="muted" style={{ fontSize: 12, lineHeight: 1.5, margin: 0 }}>
-        {m.moving
+        {m.state === "moving"
           ? `This is an estimate. Your order fills at the next new price, ${m.expectedWait}.`
-          : "The market is closed and the price is not moving. Your order will wait until the next new price after it reopens."}{" "}
+          : m.state === "paused"
+            ? "The feed's last update repeated the previous price, which usually means the market has closed. Your order will wait for the next new price — possibly not until it reopens."
+            : "The market is closed and the price is not moving. Your order will wait until the next new price after it reopens."}{" "}
         Unfilled orders can be taken back after 7 days.
       </p>
 

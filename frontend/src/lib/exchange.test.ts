@@ -4,12 +4,15 @@ import {
   CANCEL_AFTER_SECONDS,
   estimateBuy,
   estimateSell,
+  holdingsFor,
   lastPriceChange,
   marketState,
   medianGap,
   orderLabel,
   valueOf,
+  type ExchangeAsset,
   type ExchangeOrder,
+  type ExchangeState,
   type FeedRound,
 } from "./exchange";
 
@@ -90,21 +93,82 @@ describe("reading a feed's history", () => {
 describe("market state", () => {
   const now = 1_000_000;
 
-  it("calls a market with fresh heartbeats and no new price closed", () => {
+  it("calls a market with fresh heartbeats and no new price for hours closed", () => {
     const s = marketState(
-      { latest: round(1n, now - 60), lastChange: round(1n, now - 20 * 3_600), cadenceSeconds: 3_600 },
+      { latest: round(1n, now - 60, 30n), lastChange: round(1n, now - 20 * 3_600, 10n), cadenceSeconds: 3_600 },
       now,
     );
-    expect(s.moving).toBe(false);
+    expect(s.state).toBe("closed");
     expect(s.label).toMatch(/closed/);
   });
 
-  it("calls a market with a recent change moving, and sizes the wait by cadence", () => {
-    const hourly = marketState({ latest: round(1n, now - 60), lastChange: round(1n, now - 60), cadenceSeconds: 3_600 }, now);
-    expect(hourly.moving).toBe(true);
+  /**
+   * Friday 25 September, gold: a new price at 22:05 UTC, then at 23:05 a round
+   * with the SAME price. Judged by time alone the page said "within about an
+   * hour" for two more hours, and orders placed then waited until Sunday. The
+   * repeat is the signal, and it counts the moment it lands.
+   */
+  it("flags a latest round that repeats the price immediately, not hours later", () => {
+    const at2205 = round(4_285_625n, now - 3_600, 41n);
+    const at2305 = round(4_285_625n, now - 60, 42n);
+    const s = marketState({ latest: at2305, lastChange: at2205, cadenceSeconds: 3_600 }, now);
+    expect(s.state).toBe("paused");
+    expect(s.moving).toBe(false);
+    expect(s.label).toMatch(/repeated/);
+    expect(s.expectedWait).toMatch(/reopens/);
+  });
+
+  it("calls a market whose latest round is its last change moving, and sizes the wait by cadence", () => {
+    const r = round(1n, now - 60, 7n);
+    const hourly = marketState({ latest: r, lastChange: r, cadenceSeconds: 3_600 }, now);
+    expect(hourly.state).toBe("moving");
     expect(hourly.expectedWait).toMatch(/hour/);
-    const daily = marketState({ latest: round(1n, now), lastChange: round(1n, now - 3_600), cadenceSeconds: 86_400 }, now);
-    expect(daily.expectedWait).toMatch(/day/);
+    const d = round(1n, now - 3_600, 8n);
+    expect(marketState({ latest: d, lastChange: d, cadenceSeconds: 86_400 }, now).expectedWait).toMatch(/day/);
+  });
+});
+
+describe("holdings", () => {
+  const alice = "0x00000000000000000000000000000000000a11ce" as const;
+  const bob = "0x00000000000000000000000000000000000000b0" as const;
+  const asset = (id: number, balance: bigint): ExchangeAsset => ({
+    id, symbol: id === 0 ? "XAU" : "CSPX", name: id === 0 ? "Gold" : "S&P 500",
+    feed: "0x0000000000000000000000000000000000000001", token: "0x0000000000000000000000000000000000000002",
+    feedDecimals: 8, active: true, latest: round(P1, 0, 1n), lastChange: null, cadenceSeconds: 3_600,
+    totalSupply: balance, balance,
+  });
+  const order = (o: Partial<ExchangeOrder>): ExchangeOrder => ({
+    id: 0, trader: alice, assetId: 0, side: "buy", status: "pending", placedRound: 1n, placedAt: 0,
+    amountIn: 100_000_000n, amountOut: 0n, fee: 0n, fillRound: 0n, fillPrice: 0n, ready: null, ...o,
+  });
+
+  it("shows an asset with waiting orders even before anything is held", () => {
+    const state: ExchangeState = {
+      assets: [asset(0, 0n), asset(1, 0n)],
+      orders: [order({ id: 2 }), order({ id: 3, amountIn: 50_000_000n }), order({ id: 4, trader: bob })],
+      reserve: 0n, escrowed: 0n,
+    };
+    const rows = holdingsFor(state, alice);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.asset.symbol).toBe("XAU");
+    expect(rows[0]!.pendingBuys).toBe(2);
+    expect(rows[0]!.pendingBuyUsdc).toBe(150_000_000n);
+  });
+
+  it("values a holding at the latest price and ignores filled orders", () => {
+    const state: ExchangeState = {
+      assets: [asset(0, 10n ** 18n)],
+      orders: [order({ status: "filled" })],
+      reserve: 0n, escrowed: 0n,
+    };
+    const [h] = holdingsFor(state, alice);
+    expect(h!.value).toBe(4_400_000_000n);
+    expect(h!.pendingBuys).toBe(0);
+  });
+
+  it("leaves out assets with nothing held and nothing waiting", () => {
+    const state: ExchangeState = { assets: [asset(0, 0n)], orders: [], reserve: 0n, escrowed: 0n };
+    expect(holdingsFor(state, alice)).toEqual([]);
   });
 });
 

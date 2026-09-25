@@ -155,23 +155,84 @@ export function medianGap(rounds: readonly FeedRound[]): number | null {
   return gaps.length ? gaps[Math.floor(gaps.length / 2)]! : null;
 }
 
+export type FeedState = "moving" | "paused" | "closed";
+
 /**
  * Whether the asset's price is moving, in words a visitor can act on.
  *
- * "Frozen" is decided by the PRICE, not the clock: at a weekend the feed keeps
- * publishing with fresh timestamps, and a staleness check on those would call
- * a closed market live.
+ * Decided by the PRICE, never the clock: at a weekend the feed keeps publishing
+ * with fresh timestamps, and a staleness check on those would call a closed
+ * market live.
+ *
+ * Three states rather than two, because of a Friday night in September. Gold
+ * changed price at 22:05 UTC, then published again at 23:05 with the same
+ * price — its market had closed for the weekend. Judged only by time since the
+ * last change, the page kept saying "fills within about an hour" for another
+ * two and a half hours, and orders placed then waited until Sunday night. A
+ * latest round that repeats its predecessor is evidence on its own, the moment
+ * it lands; it is `paused`. `closed` is the same thing confirmed by time.
  */
-export function marketState(a: Pick<ExchangeAsset, "latest" | "lastChange" | "cadenceSeconds">, nowSeconds: number) {
+export function marketState(
+  a: Pick<ExchangeAsset, "latest" | "lastChange" | "cadenceSeconds">,
+  nowSeconds: number,
+): { state: FeedState; moving: boolean; label: string; expectedWait: string } {
   const cadence = a.cadenceSeconds ?? 3600;
-  const sinceChange = a.lastChange ? nowSeconds - a.lastChange.updatedAt : Infinity;
-  // Two missed updates in a row without a new price reads as a closed market.
-  const moving = sinceChange <= cadence * 2.5;
-  return {
-    moving,
-    label: moving ? "Price moving" : "Market closed — price unchanged",
-    expectedWait: cadence <= 2 * 3600 ? "within about an hour" : "within about a day",
-  };
+  const typicalWait = cadence <= 2 * 3600 ? "within about an hour" : "within about a day";
+
+  if (!a.lastChange || nowSeconds - a.lastChange.updatedAt > cadence * 2.5) {
+    return {
+      state: "closed",
+      moving: false,
+      label: "Market closed — price unchanged",
+      expectedWait: "when the price moves again",
+    };
+  }
+  if (a.latest.roundId !== a.lastChange.roundId) {
+    return {
+      state: "paused",
+      moving: false,
+      label: "Last update repeated the price",
+      expectedWait: "at the next new price — possibly not until the market reopens",
+    };
+  }
+  return { state: "moving", moving: true, label: "Price moving", expectedWait: typicalWait };
+}
+
+/** One asset's line in the portfolio: what is held, and what is still waiting. */
+export interface Holding {
+  asset: ExchangeAsset;
+  /** The holding at the feed's latest price, in mUSDC, before any fee. */
+  value: bigint;
+  pendingBuys: number;
+  /** mUSDC committed to buy orders that have not filled. */
+  pendingBuyUsdc: bigint;
+  pendingSells: number;
+  /** Asset tokens committed to sell orders that have not filled. */
+  pendingSellTokens: bigint;
+}
+
+/**
+ * Per asset: the wallet's holding and its orders still waiting. Assets with
+ * neither are left out, so an empty list means "nothing here", not "zero".
+ */
+export function holdingsFor(state: ExchangeState, account: Address): Holding[] {
+  const mine = state.orders.filter(
+    (o) => o.status === "pending" && o.trader.toLowerCase() === account.toLowerCase(),
+  );
+  return state.assets.flatMap((asset) => {
+    const own = mine.filter((o) => o.assetId === asset.id);
+    const buys = own.filter((o) => o.side === "buy");
+    const sells = own.filter((o) => o.side === "sell");
+    if (asset.balance === 0n && own.length === 0) return [];
+    return [{
+      asset,
+      value: valueOf(asset.balance, asset.latest.answer, asset.feedDecimals),
+      pendingBuys: buys.length,
+      pendingBuyUsdc: buys.reduce((s, o) => s + o.amountIn, 0n),
+      pendingSells: sells.length,
+      pendingSellTokens: sells.reduce((s, o) => s + o.amountIn, 0n),
+    }];
+  });
 }
 
 /** What an order is doing, in one line. */
