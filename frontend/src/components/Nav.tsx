@@ -6,6 +6,7 @@ import type { View } from "../lib/view";
 
 const LINKS: { view: View; label: string }[] = [
   { view: "markets", label: "Markets" },
+  { view: "trade", label: "Trade" },
   { view: "portfolio", label: "Portfolio" },
   { view: "leaderboard", label: "Leaderboard" },
   { view: "live", label: "Live" },

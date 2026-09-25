@@ -120,7 +120,7 @@ describe("URL round trip", () => {
  * looks exactly like the link being wrong. So it is asserted here instead.
  */
 describe("route registration", () => {
-  const VIEWS: View[] = ["landing", "markets", "detail", "portfolio", "leaderboard", "live"];
+  const VIEWS: View[] = ["landing", "markets", "detail", "portfolio", "leaderboard", "live", "trade"];
 
   it("survives a round trip for every top-level view", () => {
     for (const view of VIEWS) {

@@ -10,6 +10,7 @@ import { Detail } from "./views/Detail";
 import { Portfolio } from "./views/Portfolio";
 import { Leaderboard } from "./views/Leaderboard";
 import { Live } from "./views/Live";
+import { Trade } from "./views/Trade";
 import type { View } from "./lib/view";
 import { MarketStatus } from "./lib/types";
 import { eventKeyFor } from "./lib/events";
@@ -148,7 +149,11 @@ export default function App() {
         </div>
       )}
 
-      {data.loading ? (
+      {view === "trade" ? (
+        // Outside the markets gate: the exchange reads its own contract and
+        // has no reason to wait for every market to load first.
+        <Trade wallet={wallet} onBalanceChange={data.refresh} />
+      ) : data.loading ? (
         <div className="page muted">Loading markets from Sepolia…</div>
       ) : (
         <>

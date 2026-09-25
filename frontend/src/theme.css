@@ -372,3 +372,27 @@ input:focus {
 .linklike:hover {
   color: var(--color-text);
 }
+
+/* Two equal columns, one on a phone — the exchange's asset cards. */
+.grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-4);
+}
+/* Content with a fixed-width panel beside it; the panel drops below on a narrow screen. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: var(--space-6);
+  align-items: start;
+}
+@media (max-width: 960px) {
+  .split {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+}

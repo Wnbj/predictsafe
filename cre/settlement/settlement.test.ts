@@ -1,3 +1,4 @@
+import { decodeAbiParameters, parseAbiParameters } from "viem"
 import { describe, expect, test } from "bun:test"
 import {
   checkRoundUsable,
@@ -21,6 +22,8 @@ import {
   type Config,
   type FeedRound,
   retryDelayMs,
+  onFillOrders,
+  encodeFillReport,
 } from "./main"
 
 /**
@@ -593,5 +596,61 @@ describe("retryDelayMs", () => {
     for (const seed of [-1, -999_999, Number.NaN, Number.POSITIVE_INFINITY, 0]) {
       expect(retryDelayMs(1, seed, window)).toBeGreaterThanOrEqual(0)
     }
+  })
+})
+
+
+/**
+ * The exchange's order filler.
+ *
+ * It is registered after every other handler on purpose: trigger indices are
+ * positions in a list, and RUNBOOK's table has already been wrong once because
+ * a handler was inserted in the middle.
+ */
+describe("exchange order filler", () => {
+  const base = {
+    flightContractAddress: "0x0900000000000000000000000000000000000001",
+    chainSelectorName: "ethereum-testnet-sepolia",
+    apiUrl: "https://example.invalid",
+    apiKey: "unused",
+    gasLimit: "1000000",
+    cryptoContractAddress: "0x0900000000000000000000000000000000000002",
+    stockContractAddress: "0x0900000000000000000000000000000000000003",
+    reserveContractAddress: "0x0900000000000000000000000000000000000004",
+    sweepSchedule: "0 0,30 * * * *",
+  }
+  const fns = (extra: Record<string, string>) =>
+    initWorkflow({ ...base, ...extra } as Config).map((h) => h.fn)
+
+  test("is appended after every existing handler", () => {
+    const withExchange = fns({
+      exchangeContractAddress: "0x0900000000000000000000000000000000000006",
+      exchangeSchedule: "0 5,15,25,35,45,55 * * * *",
+    })
+    const without = fns({})
+    expect(withExchange.slice(0, without.length)).toEqual(without)
+    expect(withExchange.at(-1)).toBe(onFillOrders)
+    expect(withExchange).toHaveLength(without.length + 1)
+  })
+
+  test("is not registered without a schedule, or with the zero address", () => {
+    expect(fns({ exchangeContractAddress: "0x0900000000000000000000000000000000000006" })).not.toContain(onFillOrders)
+    expect(
+      fns({
+        exchangeContractAddress: "0x0000000000000000000000000000000000000000",
+        exchangeSchedule: "0 5,15,25,35,45,55 * * * *",
+      }),
+    ).not.toContain(onFillOrders)
+  })
+
+  /**
+   * The contract decodes the report as `abi.decode(report, (uint256[]))`. The
+   * report carries ids and nothing else — no price, no round — which is what
+   * makes the DON a keeper rather than a party that could steer a fill.
+   */
+  test("encodes exactly the order ids, as the contract decodes them", () => {
+    const encoded = encodeFillReport([3n, 7n])
+    const [ids] = decodeAbiParameters(parseAbiParameters("uint256[]"), encoded)
+    expect(ids).toEqual([3n, 7n])
   })
 })

@@ -112,6 +112,18 @@ export type Config = {
    * cron step contains the character pair that would close it.
    */
   sweepSchedule?: string
+  /**
+   * AssetExchange address — the synthetic gold / S&P 500 market. Empty, or
+   * the zero address, leaves the order filler unregistered.
+   */
+  exchangeContractAddress?: string
+  /**
+   * Cron schedule for filling exchange orders, six-field form. Separate from
+   * `sweepSchedule` because it answers a different clock: a settlement sweep
+   * catches what the log trigger missed, while this is the ONLY thing that
+   * fills orders automatically, so it runs more often.
+   */
+  exchangeSchedule?: string
   gasLimit: string
 }
 
@@ -1892,6 +1904,95 @@ export const onSweepStocks = (runtime: Runtime<Config>): string => {
   return "nothing stuck"
 }
 
+// --- the asset exchange ---------------------------------------------------
+
+/**
+ * AssetExchange sells synthetic gold and S&P 500 tokens priced by Chainlink
+ * Data Feeds, and every order fills at the first NEW price published after it.
+ *
+ * This handler is the keeper, and deliberately nothing more. It asks the
+ * contract which orders have a new price to fill at and sends back their ids.
+ * The report carries no price and no round: the contract finds both itself,
+ * from the feed, and `fill` is open to anyone with the same result. So a
+ * wrong, late or missing report can delay a fill, and cannot change one.
+ *
+ * Reads are pinned to the last finalized block, like the other sweeps, so all
+ * ten nodes see the same list. The contract recomputes at execution time, so
+ * an order someone filled by hand in the meantime is simply skipped.
+ */
+const exchangeAbi = [
+  {
+    type: "function",
+    name: "fillableOrders",
+    stateMutability: "view",
+    inputs: [{ name: "max", type: "uint256" }],
+    outputs: [{ name: "ids", type: "uint256[]" }],
+  },
+] as const
+
+/**
+ * Orders per fill report. Each fill walks the feed from its order's round to
+ * the first new price — about one round on a weekday, but around 46 after a
+ * weekend of hourly gold heartbeats — so a report is kept small enough that
+ * the worst case stays well inside its gas.
+ */
+export const EXCHANGE_FILLS_PER_REPORT = 2
+
+/** Gas for one fill report; see EXCHANGE_FILLS_PER_REPORT for the sizing. */
+const EXCHANGE_GAS_LIMIT = "6000000"
+
+/** The report `AssetExchange._processReport` decodes: `abi.encode(uint256[])`. */
+export const encodeFillReport = (ids: readonly bigint[]): `0x${string}` =>
+  encodeAbiParameters(parseAbiParameters("uint256[] orderIds"), [ids])
+
+export const onFillOrders = (runtime: Runtime<Config>): string => {
+  const address = runtime.config.exchangeContractAddress ?? ""
+  if (address === "" || address === ZERO_ADDRESS) return "no exchange configured"
+
+  const evmClient = sweepEvm(runtime)
+  const reads = newReadBudget()
+  const atBlock = finalizedBlock(runtime, evmClient, reads)
+
+  const ids = decodeFunctionResult({
+    abi: exchangeAbi,
+    functionName: "fillableOrders",
+    data: ethCall(
+      runtime,
+      evmClient,
+      address,
+      encodeFunctionData({
+        abi: exchangeAbi,
+        functionName: "fillableOrders",
+        args: [BigInt(EXCHANGE_FILLS_PER_REPORT)],
+      }),
+      atBlock,
+      reads,
+    ),
+  }) as readonly bigint[]
+
+  if (ids.length === 0) {
+    runtime.log(`Exchange at block ${atBlock}: nothing to fill`)
+    return "nothing to fill"
+  }
+
+  runtime.log(`Exchange at block ${atBlock}: filling orders ${ids.join(", ")}`)
+  const signedReport = runtime.report(prepareReportRequest(encodeFillReport(ids))).result()
+  const txResult = evmClient
+    .writeReport(runtime, {
+      receiver: address,
+      report: signedReport,
+      gasConfig: { gasLimit: EXCHANGE_GAS_LIMIT },
+    })
+    .result()
+
+  if (txResult.txStatus !== TxStatus.SUCCESS) {
+    throw new Error(`Fill write failed: ${txResult.errorMessage || txResult.txStatus}`)
+  }
+  const txHash = bytesToHex(txResult.txHash ?? new Uint8Array(32))
+  runtime.log(`Filled orders ${ids.join(", ")} in tx ${txHash}`)
+  return txHash
+}
+
 // --- reserve settlement, from a Chainlink PoR / NAV feed ---------------------
 //
 // Deliberately not a flag on the stock path. The equity rule — void unless the
@@ -2160,6 +2261,15 @@ export const initWorkflow = (config: Config) => {
     sweep(config.flightContractAddress, onSweepFlights)
     sweep(config.cryptoContractAddress, onSweepCrypto)
     sweep(config.stockContractAddress, onSweepStocks)
+  }
+
+  // The exchange's order filler. Appended LAST so that every trigger index
+  // before it stays where RUNBOOK's table says it is.
+  const exchange = config.exchangeContractAddress ?? ""
+  if (exchange !== "" && exchange !== ZERO_ADDRESS && config.exchangeSchedule) {
+    handlers.push(
+      handler(new CronCapability().trigger({ schedule: config.exchangeSchedule }), onFillOrders),
+    )
   }
 
   return handlers

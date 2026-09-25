@@ -23,6 +23,14 @@ export const RESERVE_MARKET_ADDRESS = (import.meta.env.VITE_RESERVE_MARKET_ADDRE
 export const AMM_MARKET_ADDRESS = (import.meta.env.VITE_AMM_MARKET_ADDRESS ??
   "0xc9961096dc98eE17eD28bB417BB726F1b64f84FF") as `0x${string}`;
 
+/**
+ * The synthetic-asset exchange: gold and S&P 500 tokens priced by Chainlink
+ * Data Feeds, every order filled at the next NEW price. Deployed 2026-09-25.
+ * Not a market contract — it settles nothing and is not scanned for logs.
+ */
+export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
+  "0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D") as `0x${string}`;
+
 export const TOKEN_ADDRESS = (import.meta.env.VITE_TOKEN_ADDRESS ??
   "0xcd123a8d74ef062dddd2287e87bc88eb3b208b54") as `0x${string}`;
 

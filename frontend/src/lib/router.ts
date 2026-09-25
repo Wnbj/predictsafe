@@ -44,6 +44,7 @@ export function parse(pathname: string, search: string): RouteState {
   if (pathname === "/portfolio") return { view: "portfolio", selectedKey: null, categoryFilter: "all" };
   if (pathname === "/leaderboard") return { view: "leaderboard", selectedKey: null, categoryFilter: "all" };
   if (pathname === "/live") return { view: "live", selectedKey: null, categoryFilter: "all" };
+  if (pathname === "/trade") return { view: "trade", selectedKey: null, categoryFilter: "all" };
 
   // Unknown path — treat as landing, and see the mount effect below for why
   // the address bar gets corrected to match.
@@ -66,6 +67,8 @@ export function buildPath(state: RouteState): string {
       return "/leaderboard";
     case "live":
       return "/live";
+    case "trade":
+      return "/trade";
   }
 }
 
@@ -77,7 +80,7 @@ export function buildPath(state: RouteState): string {
  * switch and the parse branch all fail loudly if forgotten, while forgetting
  * this quietly rewrites a deep link to `/` and looks like the link was wrong.
  */
-export const KNOWN_PATHS = /^\/(markets|portfolio|leaderboard|live)/;
+export const KNOWN_PATHS = /^\/(markets|portfolio|leaderboard|live|trade)/;
 
 export interface Router extends RouteState {
   /** Pushes a new history entry — for real navigation (view/market changes). */

@@ -120,6 +120,7 @@ for key, label in (
     ('stockContractAddress',   'stock  '),
     ('reserveContractAddress', 'reserve'),
     ('ammContractAddress',     'amm    '),
+    ('exchangeContractAddress', 'exchange'),
 ):
     v = c.get(key) or ''
     if v:
@@ -148,11 +149,13 @@ pairs = {
     "STOCK": "stockContractAddress",
     "RESERVE": "reserveContractAddress",
     "AMM": "ammContractAddress",
+    "EXCHANGE": "exchangeContractAddress",
 }
 
 bad = 0
 for name, key in pairs.items():
-    m = re.search(rf'{name}_MARKET_ADDRESS = \(import\.meta\.env\.\w+ \?\?\s*"(0x[0-9a-fA-F]{{40}})"', text)
+    const = "EXCHANGE_ADDRESS" if name == "EXCHANGE" else f"{name}_MARKET_ADDRESS"
+    m = re.search(rf'{const} = \(import\.meta\.env\.\w+ \?\?\s*"(0x[0-9a-fA-F]{{40}})"', text)
     app = m.group(1).lower() if m else None
     flow = (config.get(key) or "").lower()
     if app is None:
