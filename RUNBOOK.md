@@ -630,6 +630,7 @@ contract address in `config.staging.json` populated:
 | 4 | cron sweep, flights |
 | 5 | cron sweep, crypto |
 | 6 | cron sweep, stocks |
+| 7 | cron, exchange order filler (only with `exchangeContractAddress` and `exchangeSchedule` set) |
 
 **These numbers are positions in a list built at runtime, not fixed ids.**
 `initWorkflow` pushes a handler only when its contract address is non-empty
@@ -647,9 +648,12 @@ LOG handler, which registers unconditionally and IS silenced by the zero
 address: a log handler waiting for an event nobody emits costs nothing, while a
 cron handler fires whether or not anything happened.
 
-So in the production shape as of 2026-09-20 — flights silenced, the other four
-live — the list is 0 flight log, 1 crypto log, 2 stock log, 3 reserve log,
-4 cron sweep crypto, 5 cron sweep stocks. There is no flight sweep.
+Production today has every address set, so its list is the full table above:
+0–3 the four log handlers, 4–6 the three sweeps, and 7 the exchange's order
+filler. The filler is appended after everything else on purpose, so that adding
+it moved no existing index. (For one evening in September flights were
+silenced by the zero address and there was no flight sweep; that is no longer
+the case.)
 
 **The table is now asserted by a test** (`describe("trigger indices")` in
 `cre/settlement/settlement.test.ts`), which calls the real `initWorkflow` and
@@ -945,6 +949,68 @@ A further step is the **confidential HTTP** capability
 (`networking/confidentialhttp`), which templates the secret into the request on
 the node rather than passing it through workflow memory as a string. Not done.
 
+## The asset exchange (synthetic gold and S&P 500)
+
+`AssetExchange` at `0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D` sells synthetic
+tokens — `sXAU`, `sCSPX` — priced by Chainlink Data Feeds, against a reserve of
+mUSDC. It is not a market: nothing is settled, and `/live` does not scan it.
+
+**Every order fills at the first NEW price published after it.** New means a
+round whose price differs from the round before it, published strictly after
+the order's block. The contract walks the feed itself to find that round, up to
+`MAX_WALK` (100) rounds, so a fill needs no price from anyone:
+
+```bash
+cast call $EX 'nextFill(uint256)(bool,uint80,int256)' <orderId> --rpc-url $RPC   # would it fill now, and at what
+cast send $EX 'fill(uint256[])' '[<orderId>]' ...                               # anyone may; same result
+```
+
+Filling is open to anyone because the fill round is fixed by the order: calling
+early does nothing, calling late cannot pick a better price.
+
+**The DON fills on a schedule.** Trigger index 7 runs on `exchangeSchedule`
+(`0 5,15,25,35,45,55 * * * *` — every ten minutes, off the settlement sweeps'
+:00 and :30), reads `fillableOrders(2)` at the last finalized block, and sends
+the ids back as `abi.encode(uint256[])` with a 6,000,000 gas limit. Two per
+report because a fill after a weekend walks ~46 gold heartbeats.
+
+**Expect the filler to lag a new price by 17–27 minutes.** It reads the
+finalized block, which on Sepolia trails the head by about 84 blocks — measured
+2026-09-25, when the first simulation of the filler returned `0x` because the
+contract, deployed six minutes earlier, did not exist yet at the finalized
+block. Add the ten-minute schedule and a gold order placed at :10 fills around
+:25–:35 of the next hour. "Fill now" in the app skips the wait.
+
+**Why these two assets, measured before listing** (Sepolia, September 2026):
+
+| feed | cadence | weekend | listed |
+|---|---|---|---|
+| XAU/USD | hourly, every weekday round a new price | Saturday: 24 rounds, 0 new; resumes Sunday evening | yes |
+| CSPX/USD | about daily | every Sunday repeats; sometimes Monday | yes |
+| IB01/USD | about daily | half of all rounds repeat, weekdays included | no |
+| USTB NAV | about daily | 17 of 39 rounds repeat | no |
+
+Measure before listing anything else. A feed that republishes an unchanged
+price with a fresh timestamp is normal behaviour, not a fault, and it is exactly
+what the fill rule is built for — but a feed that rarely moves makes a market
+nobody can use.
+
+**The reserve.** `reserveAvailable()` is the contract's mUSDC less
+`escrowedUsdc`, the buy orders still waiting — those are never used to pay a
+seller. A sell the reserve cannot cover is refunded with its tokens, not paid in
+part. Top it up with `fundReserve(amount)` from any wallet.
+
+**An order with no new price for seven days** can be taken back by its trader
+with `cancel(orderId)`: a buy returns its mUSDC in full, a sell re-mints its
+tokens. That covers a feed that stops and an aggregator upgrade, whose new phase
+restarts round numbering and is deliberately not searched.
+
+**Deploy** with `script/DeployExchange.s.sol` (`TOKEN`, `FORWARDER`,
+`WORKFLOW_NAME`, `WORKFLOW_AUTHOR`, optional `RESERVE`). It sets the author
+before the name, lists both feeds and seeds the reserve. Then put the address
+in `exchangeContractAddress` in the workflow config and in `EXCHANGE_ADDRESS`
+in `frontend/src/lib/config.ts`; `preflight.sh` checks both.
+
 ## Reserve markets (Proof of Reserve / fund NAV)
 
 `ReserveMarket.sol` at `0xa768Be2741A0464b81606649eCa45bfF7aD4d939`, with stETH
@@ -1183,9 +1249,9 @@ there is no event title on chain.
 
 | suite | count | command |
 |---|---|---|
-| contracts | 170 | `cd contracts && forge test` |
-| frontend | 164 | `cd frontend && bun run test` |
-| workflow | 55 | `cd cre/settlement && bun test` |
+| contracts | 190 | `cd contracts && forge test` |
+| frontend | 177 | `cd frontend && bun run test` |
+| workflow | 58 | `cd cre/settlement && bun test` |
 
 The frontend and workflow suites were added after a routing bug reached a
 user: writes branched on `categoryId` with the flight contract as the else, so

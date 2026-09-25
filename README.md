@@ -34,6 +34,12 @@ guessing.
 | **Reserves** | Proof-of-Reserve and fund NAV levels | Chainlink PoR feeds |
 | **AMM** | same crypto questions, priced by a constant-product pool | same as Crypto |
 
+Alongside the markets, an **exchange** sells synthetic gold and S&P 500 tokens
+priced by Chainlink Data Feeds. It is a different product with the same
+discipline: every order fills at the next *new* price the feed publishes, and a
+Chainlink DON fills orders on a schedule — see
+[An exchange must never trade at a known price](#an-exchange-must-never-trade-at-a-known-price).
+
 ---
 
 ## Architecture
@@ -75,6 +81,8 @@ guessing.
 | ReserveMarket | `0xa768Be2741A0464b81606649eCa45bfF7aD4d939` |
 | AmmMarket | `0xc9961096dc98eE17eD28bB417BB726F1b64f84FF` |
 | MockUSDC | `0xcd123a8d74ef062dddd2287e87bc88eb3b208b54` |
+| AssetExchange | `0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D` |
+| sXAU / sCSPX | `0xF08cC188Ed24d8dFDd62445cA88D84775aD792e1` / `0xA82D955E2e8B855aE83CBf10468772c4e1E1C64E` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -215,6 +223,28 @@ found `sleep`, `Math.random` and `Date.now`, which is what the jittered retry
 uses instead. A typecheck proves someone wrote a declaration, not that the host
 implements it.
 
+### An exchange must never trade at a known price
+
+Selling a gold token at the latest feed price is the obvious design, and it
+gives money away. Measured on Sepolia: CSPX/USD publishes about once a day and
+republishes the same price every Sunday; XAU/USD publishes hourly but put out
+24 rounds one Saturday without a single new price. Anyone watching the real
+market knows where the next update will land — they buy before it and sell
+after it, and the reserve pays for both. Mutual funds solved this long ago the
+same way: an order fills at the *next* computed price, never the last one.
+
+"New" turned out to mean two things. A round that repeats the previous price is
+a heartbeat — its timestamp is fresh, so a staleness check on time would accept
+it; the *price* has to have changed. And a round published in the same block as
+the order does not count, or someone who saw the update pending could order in
+front of it.
+
+The contract finds the fill price itself. A DON's report carries order ids and
+nothing else, and for each one the contract walks the feed from the order's own
+round to the first genuine change. Since that round is fixed by the order,
+*when* a fill happens cannot change *what* it pays — so filling is open to
+anyone, and the DON is a keeper rather than a party that could steer a price.
+
 ---
 
 ## Running it
@@ -226,11 +256,11 @@ export PATH="$HOME/.cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
 ```
 
 ```bash
-cd contracts && forge test                     # 170 tests
-cd frontend  && bun install && bun run test    # 164 tests
+cd contracts && forge test                     # 190 tests
+cd frontend  && bun install && bun run test    # 177 tests
 cd frontend  && bun run dev                    # the app, against live Sepolia
 cd frontend  && bun run snapshot               # refresh shipped chain history
-cd cre/settlement && bun test                  # 55 tests
+cd cre/settlement && bun test                  # 58 tests
 ```
 
 The app needs an RPC that serves `eth_getLogs` over a 10,000-block range. The
@@ -269,6 +299,13 @@ have them.
 - **`FlightMarket` predates `ParimutuelMarket`** and does not inherit it. It is
   deployed with live positions, so the parimutuel logic exists in two places
   until it is next redeployed.
+- **The exchange's reserve is the counterparty.** When an asset rises, sellers
+  are paid from a seeded reserve; a sale it cannot cover is refunded rather than
+  paid in part. Real tokenized assets are backed by the asset itself — these are
+  backed only by the reserve, on a testnet, with mock money.
+- **An exchange order can wait a long time.** It fills at the next new price:
+  within about an hour for gold on a weekday, about a day for the S&P 500, and
+  not at all over a weekend. That is the price of never trading at a known one.
 - **`ownerVoid` exists on every market.** An escape hatch for a POC, and it
   emits no event, which the live view has to account for separately. It should
   not survive into anything real.
