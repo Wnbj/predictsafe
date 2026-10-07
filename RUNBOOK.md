@@ -981,12 +981,20 @@ contract, deployed six minutes earlier, did not exist yet at the finalized
 block. Add the ten-minute schedule and a gold order placed at :10 fills around
 :25–:35 of the next hour. "Fill now" in the app skips the wait.
 
+That is the ceiling, not the typical case. **The first real fills, all four by
+the DON with nobody pressing anything:** gold's new price at Sun 2026-09-27
+21:40 UTC filled orders 0 and 2 at 21:45 and order 3 at 21:55 (two per report,
+so the third waited one run); CSPX's at Mon 07:45 filled order 1 at 07:55. Each
+transaction went to the forwarder `0xF8344CFd…` from a different node and
+carries `ReportProcessed(result = true)`. Five to fifteen minutes, then — the
+finalized lag on Sepolia varies, so plan around the ceiling and expect better.
+
 **Why these two assets, measured before listing** (Sepolia, September 2026):
 
 | feed | cadence | weekend | listed |
 |---|---|---|---|
 | XAU/USD | hourly, every weekday round a new price | Saturday: 24 rounds, 0 new; resumes Sunday evening | yes |
-| CSPX/USD | about daily | every Sunday repeats; sometimes Monday | yes |
+| CSPX/USD | about daily | Saturday can repeat Friday's close, Sunday repeats; sometimes Monday | yes |
 | IB01/USD | about daily | half of all rounds repeat, weekdays included | no |
 | USTB NAV | about daily | 17 of 39 rounds repeat | no |
 
