@@ -153,6 +153,18 @@ export default function App() {
         // Outside the markets gate: the exchange reads its own contract and
         // has no reason to wait for every market to load first.
         <Trade wallet={wallet} onBalanceChange={data.refresh} />
+      ) : view === "portfolio" ? (
+        // Also outside it: the token holdings at the top do not depend on the
+        // markets, and behind the gate they waited for all of them. The
+        // market half of the page shows its own loading line instead.
+        <Portfolio
+          positions={data.positions}
+          marketsLoading={data.loading}
+          wallet={wallet}
+          onOpenMarket={openMarket}
+          onRefresh={data.refresh}
+          onOpenTrade={() => navigate("trade")}
+        />
       ) : data.loading ? (
         <div className="page muted">Loading markets from Sepolia…</div>
       ) : (
@@ -200,16 +212,6 @@ export default function App() {
             ) : (
               <div className="page muted">Market not found.</div>
             ))}
-
-          {view === "portfolio" && (
-            <Portfolio
-              positions={data.positions}
-              wallet={wallet}
-              onOpenMarket={openMarket}
-              onRefresh={data.refresh}
-              onOpenTrade={() => navigate("trade")}
-            />
-          )}
 
           {view === "live" && <Live markets={data.markets} lpEvents={data.lpEvents} />}
 

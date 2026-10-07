@@ -28,12 +28,15 @@ export function Portfolio({
   onOpenMarket,
   onRefresh,
   onOpenTrade,
+  marketsLoading = false,
 }: {
   positions: Position[];
   wallet: WalletState;
   onOpenMarket: (key: string) => void;
   onRefresh: () => Promise<void>;
   onOpenTrade: () => void;
+  /** The market positions are still loading; the token holdings are not gated on them. */
+  marketsLoading?: boolean;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [claiming, setClaiming] = useState<string | null>(null);
@@ -133,7 +136,7 @@ export function Portfolio({
             Wallet not connected
           </div>
           <div className="muted" style={{ fontSize: 13 }}>
-            Connect a wallet to see the stakes it holds.
+            Connect a wallet to see the stakes and tokens it holds.
           </div>
           <button className="btn btn-accent" onClick={() => void wallet.connect()}>
             Connect wallet
@@ -148,181 +151,193 @@ export function Portfolio({
       <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-2)" }}>
         My positions
       </h2>
-      <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
-        {positions.length} position{positions.length === 1 ? "" : "s"} · {totals.open} open
-      </p>
 
-      <div className="grid-4" style={{ maxWidth: 1100, marginBottom: "var(--space-6)" }}>
-        <SummaryCard label="Total staked" value={formatToken(totals.staked)} />
-        <SummaryCard
-          label="Claimable now"
-          value={formatToken(totals.claimable)}
-          accent={totals.claimable > 0n}
-        />
-        <SummaryCard
-          label="Realised P&L"
-          value={formatSigned(totals.realised)}
-          color={totals.realised >= 0n ? "var(--color-accent-300)" : "var(--color-negative)"}
-        />
-        <SummaryCard label="Open positions" value={String(totals.open)} />
-      </div>
+      {/*
+        * First, not last: below the market table it sat under every position
+        * this wallet ever took — 29 rows on the deployer — and read as missing.
+        */}
+      <TokenizedHoldings account={wallet.account} onOpenTrade={onOpenTrade} />
 
-      <div className="seg" style={{ marginBottom: "var(--space-4)" }}>
-        {FILTERS.map((f) => (
-          <button
-            key={f.key}
-            className={filter === f.key ? "active" : ""}
-            onClick={() => setFilter(f.key)}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {error && (
-        <div style={{ color: "var(--color-negative)", fontSize: 13, marginBottom: "var(--space-3)" }}>
-          {error}
-        </div>
-      )}
-
-      {filtered.length === 0 ? (
-        <div className="card" style={{ maxWidth: 520 }}>
-          <div className="heading" style={{ fontSize: 17 }}>
-            Nothing to show
-          </div>
-          <div className="muted" style={{ fontSize: 13 }}>
-            {positions.length === 0
-              ? "This wallet has not staked on any market yet."
-              : "No positions match this filter."}
-          </div>
-        </div>
+      <div className="eyebrow" style={{ marginBottom: "var(--space-2)" }}>Prediction markets</div>
+      {marketsLoading ? (
+        <div className="muted" style={{ fontSize: 13 }}>Loading markets from Sepolia…</div>
       ) : (
-        <div className="table-scroll">
-          <table className="data" style={{ maxWidth: 1200 }}>
-            <thead>
-              <tr>
-                <th>Market</th>
-                <th>Side</th>
-                <th>Staked</th>
-                <th>Claimable</th>
-                <th>P&amp;L</th>
-                <th>Status</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((p) => {
-                const cat = category(p.market.categoryId);
-                /**
-                 * `p.cost`, matching the summary cards above. This row used to
-                 * use `p.yes + p.no`, which for an AMM is SHARES rather than
-                 * money — so the table disagreed with its own totals, and the
-                 * disagreement grew with every liquidity position.
-                 */
-                const size = p.cost;
-                const resolved =
-                  p.market.status === MarketStatus.Settled ||
-                  p.market.status === MarketStatus.Void;
-                const pl = resolved ? p.entitlement - size : null;
-                // What `redeem`/`claim` alone would pay: the pool slice is a
-                // separate call and must not gate this button. This row had
-                // the rule right before `shareClaimable` existed and derived
-                // it by hand; the field now says it once, for every caller.
-                const shareClaim = p.shareClaimable;
-                const side = p.lp
-                  ? p.yes > 0n || p.no > 0n
-                    ? `LP + ${p.yes > 0n ? "Yes" : "No"}`
-                    : "LP"
-                  : p.yes > 0n && p.no > 0n
-                    ? "Both"
-                    : p.yes > 0n
-                      ? "Yes"
-                      : "No";
+        <>
+        <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
+          {positions.length} position{positions.length === 1 ? "" : "s"} · {totals.open} open
+        </p>
 
-                return (
-                  <tr key={p.market.key}>
-                    <td>
-                      <span
-                        className="tag"
-                        style={{ ...cat.tagStyle, marginRight: 8 }}
-                      >
-                        {cat.name}
-                      </span>
-                      <a
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          onOpenMarket(p.market.key);
-                        }}
-                        style={{ textDecoration: "none" }}
-                      >
-                        {p.market.question}
-                      </a>
-                    </td>
-                    <td>{side}</td>
-                    <td>{formatToken(size)}</td>
-                    <td>{p.claimable > 0n ? formatToken(p.claimable) : "—"}</td>
-                    <td
-                      style={{
-                        color:
-                          pl === null
-                            ? undefined
-                            : pl >= 0n
-                              ? "var(--color-accent-300)"
-                              : "var(--color-negative)",
-                      }}
-                    >
-                      {pl === null ? "—" : formatSigned(pl)}
-                    </td>
-                    <td>
-                      <span className="tag" style={statusStyle(p.status)}>
-                        {p.status}
-                      </span>
-                    </td>
-                    {/*
-                      * TWO claims, two buttons. A provider is owed their shares
-                      * through `redeem` and their slice of the pool through
-                      * `withdrawLiquidity`, each with its own irreversible
-                      * one-shot guard on chain. A single button would fire one
-                      * and strand the other for good.
-                      */}
-                    <td style={{ display: "flex", gap: 6 }}>
-                      {shareClaim > 0n && (
-                        <button
-                          className="btn btn-accent"
-                          style={{ padding: "4px 10px", fontSize: 13 }}
-                          disabled={claiming !== null}
-                          onClick={() => void doClaim(p.market)}
-                        >
-                          {claiming === p.market.key
-                            ? p.market.categoryId === "amm"
-                              ? "Redeeming…"
-                              : "Claiming…"
-                            : p.market.categoryId === "amm"
-                              ? "Redeem"
-                              : "Claim"}
-                        </button>
-                      )}
-                      {resolved && p.lp && !p.lp.withdrawn && p.lp.poolValue > 0n && (
-                        <button
-                          className="btn"
-                          style={{ padding: "4px 10px", fontSize: 13 }}
-                          disabled={claiming !== null}
-                          onClick={() => void doWithdraw(p.market)}
-                        >
-                          {claiming === `${p.market.key}:lp` ? "Withdrawing…" : "Withdraw LP"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="grid-4" style={{ maxWidth: 1100, marginBottom: "var(--space-6)" }}>
+          <SummaryCard label="Total staked" value={formatToken(totals.staked)} />
+          <SummaryCard
+            label="Claimable now"
+            value={formatToken(totals.claimable)}
+            accent={totals.claimable > 0n}
+          />
+          <SummaryCard
+            label="Realised P&L"
+            value={formatSigned(totals.realised)}
+            color={totals.realised >= 0n ? "var(--color-accent-300)" : "var(--color-negative)"}
+          />
+          <SummaryCard label="Open positions" value={String(totals.open)} />
         </div>
-      )}
 
-      {wallet.account && <TokenizedHoldings account={wallet.account} onOpenTrade={onOpenTrade} />}
+        <div className="seg" style={{ marginBottom: "var(--space-4)" }}>
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              className={filter === f.key ? "active" : ""}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <div style={{ color: "var(--color-negative)", fontSize: 13, marginBottom: "var(--space-3)" }}>
+            {error}
+          </div>
+        )}
+
+        {filtered.length === 0 ? (
+          <div className="card" style={{ maxWidth: 520 }}>
+            <div className="heading" style={{ fontSize: 17 }}>
+              Nothing to show
+            </div>
+            <div className="muted" style={{ fontSize: 13 }}>
+              {positions.length === 0
+                ? "This wallet has not staked on any market yet."
+                : "No positions match this filter."}
+            </div>
+          </div>
+        ) : (
+          <div className="table-scroll">
+            <table className="data" style={{ maxWidth: 1200 }}>
+              <thead>
+                <tr>
+                  <th>Market</th>
+                  <th>Side</th>
+                  <th>Staked</th>
+                  <th>Claimable</th>
+                  <th>P&amp;L</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((p) => {
+                  const cat = category(p.market.categoryId);
+                  /**
+                   * `p.cost`, matching the summary cards above. This row used to
+                   * use `p.yes + p.no`, which for an AMM is SHARES rather than
+                   * money — so the table disagreed with its own totals, and the
+                   * disagreement grew with every liquidity position.
+                   */
+                  const size = p.cost;
+                  const resolved =
+                    p.market.status === MarketStatus.Settled ||
+                    p.market.status === MarketStatus.Void;
+                  const pl = resolved ? p.entitlement - size : null;
+                  // What `redeem`/`claim` alone would pay: the pool slice is a
+                  // separate call and must not gate this button. This row had
+                  // the rule right before `shareClaimable` existed and derived
+                  // it by hand; the field now says it once, for every caller.
+                  const shareClaim = p.shareClaimable;
+                  const side = p.lp
+                    ? p.yes > 0n || p.no > 0n
+                      ? `LP + ${p.yes > 0n ? "Yes" : "No"}`
+                      : "LP"
+                    : p.yes > 0n && p.no > 0n
+                      ? "Both"
+                      : p.yes > 0n
+                        ? "Yes"
+                        : "No";
+
+                  return (
+                    <tr key={p.market.key}>
+                      <td>
+                        <span
+                          className="tag"
+                          style={{ ...cat.tagStyle, marginRight: 8 }}
+                        >
+                          {cat.name}
+                        </span>
+                        <a
+                          href="#"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            onOpenMarket(p.market.key);
+                          }}
+                          style={{ textDecoration: "none" }}
+                        >
+                          {p.market.question}
+                        </a>
+                      </td>
+                      <td>{side}</td>
+                      <td>{formatToken(size)}</td>
+                      <td>{p.claimable > 0n ? formatToken(p.claimable) : "—"}</td>
+                      <td
+                        style={{
+                          color:
+                            pl === null
+                              ? undefined
+                              : pl >= 0n
+                                ? "var(--color-accent-300)"
+                                : "var(--color-negative)",
+                        }}
+                      >
+                        {pl === null ? "—" : formatSigned(pl)}
+                      </td>
+                      <td>
+                        <span className="tag" style={statusStyle(p.status)}>
+                          {p.status}
+                        </span>
+                      </td>
+                      {/*
+                        * TWO claims, two buttons. A provider is owed their shares
+                        * through `redeem` and their slice of the pool through
+                        * `withdrawLiquidity`, each with its own irreversible
+                        * one-shot guard on chain. A single button would fire one
+                        * and strand the other for good.
+                        */}
+                      <td style={{ display: "flex", gap: 6 }}>
+                        {shareClaim > 0n && (
+                          <button
+                            className="btn btn-accent"
+                            style={{ padding: "4px 10px", fontSize: 13 }}
+                            disabled={claiming !== null}
+                            onClick={() => void doClaim(p.market)}
+                          >
+                            {claiming === p.market.key
+                              ? p.market.categoryId === "amm"
+                                ? "Redeeming…"
+                                : "Claiming…"
+                              : p.market.categoryId === "amm"
+                                ? "Redeem"
+                                : "Claim"}
+                          </button>
+                        )}
+                        {resolved && p.lp && !p.lp.withdrawn && p.lp.poolValue > 0n && (
+                          <button
+                            className="btn"
+                            style={{ padding: "4px 10px", fontSize: 13 }}
+                            disabled={claiming !== null}
+                            onClick={() => void doWithdraw(p.market)}
+                          >
+                            {claiming === `${p.market.key}:lp` ? "Withdrawing…" : "Withdraw LP"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+        </>
+      )}
     </div>
   );
 }

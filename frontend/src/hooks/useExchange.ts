@@ -14,19 +14,44 @@ import { readExchange, type ExchangeState } from "../lib/exchange";
  */
 const POLL_MS = 30_000;
 
+type Snapshot = [ExchangeState, bigint, bigint];
+
+/**
+ * A read already in flight for the same wallet is joined, not repeated. Two
+ * callers mounting together — StrictMode's double effect in dev, or a page
+ * and the nav — otherwise each paid a dozen paced requests for one answer.
+ */
+const inflight = new Map<string, Promise<Snapshot>>();
+
+function readShared(account: Address | null, fresh: boolean): Promise<Snapshot> {
+  const key = account ?? "";
+  // After a transaction a read that started before it would answer with the
+  // old state, so that caller starts its own and becomes the one others join.
+  let p = fresh ? undefined : inflight.get(key);
+  if (!p) {
+    p = Promise.all([
+      readExchange(account),
+      account ? readTokenBalance(account) : Promise.resolve(0n),
+      account ? readAllowance(account, EXCHANGE_ADDRESS) : Promise.resolve(0n),
+    ]);
+    const mine = p;
+    void p.finally(() => {
+      if (inflight.get(key) === mine) inflight.delete(key);
+    }).catch(() => {});
+    inflight.set(key, p);
+  }
+  return p;
+}
+
 export function useExchange(account: Address | null) {
   const [state, setState] = useState<ExchangeState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [usdc, setUsdc] = useState<{ balance: bigint; allowance: bigint }>({ balance: 0n, allowance: 0n });
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
 
-  const reload = useCallback(async () => {
+  const load = useCallback(async (fresh: boolean) => {
     try {
-      const [s, balance, allowance] = await Promise.all([
-        readExchange(account),
-        account ? readTokenBalance(account) : Promise.resolve(0n),
-        account ? readAllowance(account, EXCHANGE_ADDRESS) : Promise.resolve(0n),
-      ]);
+      const [s, balance, allowance] = await readShared(account, fresh);
       setState(s);
       setUsdc({ balance, allowance });
       setError(null);
@@ -37,12 +62,15 @@ export function useExchange(account: Address | null) {
   }, [account]);
 
   useEffect(() => {
-    void reload();
+    void load(false);
     const t = setInterval(() => {
-      if (!document.hidden) void reload();
+      if (!document.hidden) void load(false);
     }, POLL_MS);
     return () => clearInterval(t);
-  }, [reload]);
+  }, [load]);
+
+  /** For callers that just sent a transaction: never joins an older read. */
+  const reload = useCallback(() => load(true), [load]);
 
   return { state, error, usdc, now, reload };
 }

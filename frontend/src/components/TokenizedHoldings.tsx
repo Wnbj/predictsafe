@@ -20,7 +20,7 @@ export function TokenizedHoldings({ account, onOpenTrade }: { account: Address; 
   const { state, error, now } = useExchange(account);
 
   return (
-    <section style={{ marginTop: "var(--space-8)", maxWidth: 1200 }}>
+    <section style={{ margin: "var(--space-4) 0 var(--space-8)", maxWidth: 1200 }}>
       <div className="eyebrow" style={{ marginBottom: "var(--space-3)" }}>Tokenized assets</div>
 
       {error && (

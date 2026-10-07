@@ -56,32 +56,55 @@ import {
  * succeeds.
  */
 const RPC_GAP_MS = 150;
-let rpcQueue: Promise<unknown> = Promise.resolve();
 
-function paced<T>(fn: () => Promise<T>): Promise<T> {
-  const next = rpcQueue.then(async () => {
-    const result = await fn();
-    await new Promise((r) => setTimeout(r, RPC_GAP_MS));
-    return result;
+/**
+ * Two lanes through the one queue. Still one request at a time and the same
+ * gap, so nothing here adds load — it only decides which waiting request goes
+ * next. `priority` is for small reads the page is visibly waiting on: on a
+ * cold load the log scan queues a few hundred ranges first, and FIFO made the
+ * portfolio's token table appear 23 seconds in, under "Loading…".
+ */
+type Lane = "priority" | "normal";
+const lanes: Record<Lane, Array<() => Promise<void>>> = { priority: [], normal: [] };
+let draining = false;
+
+function paced<T>(fn: () => Promise<T>, lane: Lane = "normal"): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    lanes[lane].push(async () => {
+      // A rejection is handed to its caller and never stops the queue, or one
+      // failed request would stop every one after it for the life of the page.
+      try {
+        resolve(await fn());
+      } catch (e) {
+        reject(e);
+      }
+      await new Promise((r) => setTimeout(r, RPC_GAP_MS));
+    });
+    void drain();
   });
-  // The queue must survive a rejection, or one failed request stops every one
-  // that follows it for the life of the page.
-  rpcQueue = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
+}
+
+async function drain() {
+  if (draining) return;
+  draining = true;
+  try {
+    for (let job = lanes.priority.shift() ?? lanes.normal.shift(); job; job = lanes.priority.shift() ?? lanes.normal.shift()) {
+      await job();
+    }
+  } finally {
+    draining = false;
+  }
 }
 
 /** `http()`, with every request it issues put through the queue above. */
-function pacedHttp(url: string, config: Parameters<typeof http>[1]) {
+function pacedHttp(url: string, config: Parameters<typeof http>[1], lane: Lane = "normal") {
   const inner = http(url, config);
   return ((params) => {
     const transport = inner(params);
     return {
       ...transport,
       request: (args: Parameters<typeof transport.request>[0]) =>
-        paced(() => transport.request(args)),
+        paced(() => transport.request(args), lane),
     };
   }) as typeof inner;
 }
@@ -134,6 +157,17 @@ export const publicClient = createPublicClient({
      * `aggregate3` by viem's multicall, so almost nothing is lost.
      */
   }),
+});
+
+/**
+ * The same endpoint and settings, served from the front of the queue. For a
+ * handful of reads a page is waiting on; anything that walks logs or fans out
+ * over every market stays on `publicClient`, or this lane is just the queue
+ * again with a different name.
+ */
+export const priorityClient = createPublicClient({
+  chain,
+  transport: pacedHttp(RPC_URL, { retryCount: 5 }, "priority"),
 });
 
 /**

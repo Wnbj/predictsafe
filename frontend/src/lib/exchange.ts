@@ -1,6 +1,6 @@
 import { formatUnits, parseAbi, type Address } from "viem";
 import { chain, EXCHANGE_ADDRESS } from "./config";
-import { publicClient, walletClientFor } from "./chain";
+import { priorityClient, walletClientFor } from "./chain";
 
 /**
  * The synthetic-asset exchange: buy and sell tokens of gold and an S&P 500
@@ -267,14 +267,18 @@ export function formatFeedPrice(answer: bigint, decimals: number): string {
 const exchange = { address: EXCHANGE_ADDRESS, abi: exchangeAbi } as const;
 
 async function readHistory(feed: Address): Promise<FeedRound[]> {
-  const [latestId] = await publicClient.readContract({ address: feed, abi: feedAbi, functionName: "latestRoundData" });
+  const [latestId] = await priorityClient.readContract({ address: feed, abi: feedAbi, functionName: "latestRoundData" });
   const phase = latestId >> 64n;
   const agg = latestId & ((1n << 64n) - 1n);
   const ids: bigint[] = [];
   for (let k = 0n; k < BigInt(HISTORY_ROUNDS) && agg - k >= 1n; k++) ids.push((phase << 64n) | (agg - k));
-  const res = await publicClient.multicall({
+  const res = await priorityClient.multicall({
     contracts: ids.map((id) => ({ address: feed, abi: feedAbi, functionName: "getRoundData", args: [id] }) as const),
     allowFailure: true,
+    // viem splits a multicall at 1 KB of calldata by default, which turned
+    // these 60 rounds into five requests per feed — each a full slot in the
+    // paced queue. One `eth_call` carries all of them comfortably.
+    batchSize: 0,
   });
   return res
     .flatMap((r) =>
@@ -286,8 +290,8 @@ async function readHistory(feed: Address): Promise<FeedRound[]> {
 }
 
 export async function readExchange(account: Address | null): Promise<ExchangeState> {
-  const count = Number(await publicClient.readContract({ ...exchange, functionName: "assetCount" }));
-  const [reserve, escrowed, orderCount] = await publicClient.multicall({
+  const count = Number(await priorityClient.readContract({ ...exchange, functionName: "assetCount" }));
+  const [reserve, escrowed, orderCount] = await priorityClient.multicall({
     contracts: [
       { ...exchange, functionName: "reserveAvailable" },
       { ...exchange, functionName: "escrowedUsdc" },
@@ -296,43 +300,48 @@ export async function readExchange(account: Address | null): Promise<ExchangeSta
     allowFailure: false,
   });
 
-  const rows = await publicClient.multicall({
+  const rows = await priorityClient.multicall({
     contracts: Array.from({ length: count }, (_, i) => ({ ...exchange, functionName: "asset", args: [i] }) as const),
     allowFailure: false,
   });
 
-  const assets: ExchangeAsset[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const [symbol, feed, token, feedDecimals, active] = rows[i]!;
-    const history = await readHistory(feed);
-    const [supply, balance] = await publicClient.multicall({
-      contracts: [
-        { address: token, abi: erc20Abi, functionName: "totalSupply" },
-        { address: token, abi: erc20Abi, functionName: "balanceOf", args: [account ?? EXCHANGE_ADDRESS] },
-      ],
-      allowFailure: false,
-    });
-    assets.push({
-      id: i,
-      symbol,
-      name: NAMES[symbol] ?? symbol,
-      feed,
-      token,
-      feedDecimals,
-      active,
-      latest: history.at(-1) ?? { roundId: 0n, answer: 0n, updatedAt: 0 },
-      lastChange: lastPriceChange(history),
-      cadenceSeconds: medianGap(history),
-      totalSupply: supply,
-      balance: account ? balance : 0n,
-    });
-  }
+  // In parallel: one asset's history does not depend on another's, and the
+  // portfolio waits on the slowest of these behind every market read.
+  const assets: ExchangeAsset[] = await Promise.all(
+    rows.map(async ([symbol, feed, token, feedDecimals, active], i) => {
+      const [history, [supply, balance]] = await Promise.all([
+        readHistory(feed),
+        priorityClient.multicall({
+          contracts: [
+            { address: token, abi: erc20Abi, functionName: "totalSupply" },
+            { address: token, abi: erc20Abi, functionName: "balanceOf", args: [account ?? EXCHANGE_ADDRESS] },
+          ],
+          allowFailure: false,
+        }),
+      ]);
+      return {
+        id: i,
+        symbol,
+        name: NAMES[symbol] ?? symbol,
+        feed,
+        token,
+        feedDecimals,
+        active,
+        latest: history.at(-1) ?? { roundId: 0n, answer: 0n, updatedAt: 0 },
+        lastChange: lastPriceChange(history),
+        cadenceSeconds: medianGap(history),
+        totalSupply: supply,
+        balance: account ? balance : 0n,
+      };
+    }),
+  );
 
   const n = Number(orderCount);
   const raw = n
-    ? await publicClient.multicall({
+    ? await priorityClient.multicall({
         contracts: Array.from({ length: n }, (_, i) => ({ ...exchange, functionName: "order", args: [BigInt(i)] }) as const),
         allowFailure: false,
+        batchSize: 0, // grows with every order ever placed; see readHistory
       })
     : [];
   const orders: ExchangeOrder[] = raw.map((o, id) => ({
@@ -353,7 +362,7 @@ export async function readExchange(account: Address | null): Promise<ExchangeSta
 
   const pending = orders.filter((o) => o.status === "pending");
   if (pending.length) {
-    const next = await publicClient.multicall({
+    const next = await priorityClient.multicall({
       contracts: pending.map((o) => ({ ...exchange, functionName: "nextFill", args: [BigInt(o.id)] }) as const),
       allowFailure: true,
     });
