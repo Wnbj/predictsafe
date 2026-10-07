@@ -109,7 +109,9 @@ export interface ExchangeState {
   escrowed: bigint;
 }
 
-const NAMES: Record<string, string> = { XAU: "Gold", CSPX: "S&P 500" };
+// CSPX is the iShares S&P 500 ETF, priced per share (~$840), not the index
+// (~6,700). "S&P 500" alone read as the index and the price as wrong.
+const NAMES: Record<string, string> = { XAU: "Gold", CSPX: "S&P 500 ETF" };
 
 // --- pure: the contract's arithmetic, mirrored ---------------------------------
 

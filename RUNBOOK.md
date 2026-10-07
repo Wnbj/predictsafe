@@ -949,7 +949,7 @@ A further step is the **confidential HTTP** capability
 (`networking/confidentialhttp`), which templates the secret into the request on
 the node rather than passing it through workflow memory as a string. Not done.
 
-## The asset exchange (synthetic gold and S&P 500)
+## The asset exchange (synthetic gold and the S&P 500 ETF)
 
 `AssetExchange` at `0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D` sells synthetic
 tokens — `sXAU`, `sCSPX` — priced by Chainlink Data Feeds, against a reserve of

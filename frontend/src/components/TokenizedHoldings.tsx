@@ -36,7 +36,7 @@ export function TokenizedHoldings({ account, onOpenTrade }: { account: Address; 
             return (
               <div className="card" style={{ maxWidth: 520 }}>
                 <div className="muted" style={{ fontSize: 13 }}>
-                  No synthetic gold or S&amp;P 500 yet.{" "}
+                  No synthetic gold or S&amp;P 500 ETF yet.{" "}
                   <button className="linklike" onClick={onOpenTrade} style={{ color: "var(--color-accent)" }}>
                     Trade →
                   </button>

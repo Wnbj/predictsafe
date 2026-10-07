@@ -52,7 +52,7 @@ export function Trade({ wallet, onBalanceChange }: { wallet: WalletState; onBala
         Trade tokenized assets
       </h2>
       <p className="muted" style={{ margin: "0 0 var(--space-6)", maxWidth: 780 }}>
-        Synthetic gold and S&amp;P 500 tokens, priced by Chainlink Data Feeds. Every order fills at
+        Synthetic gold and S&amp;P 500 ETF (CSPX) tokens, priced by Chainlink Data Feeds. Every order fills at
         the <b>next new price</b> the feed publishes — never at a price anyone already knows, which
         is what stops a trader who watches the real market from draining the reserve.
       </p>
@@ -107,7 +107,7 @@ export function Trade({ wallet, onBalanceChange }: { wallet: WalletState; onBala
 function HowItWorks() {
   const steps = [
     ["Place an order", "Your mUSDC — or, for a sale, your tokens — is held by the contract."],
-    ["Wait for a new price", "Gold: about hourly on weekdays. S&P 500: about daily. Weekends: none."],
+    ["Wait for a new price", "Gold: about hourly on weekdays. S&P 500 ETF: about daily. Weekends: none."],
     ["Filled automatically", "Chainlink CRE fills it on a schedule. Anyone can too — at the same price."],
   ];
   return (

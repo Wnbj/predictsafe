@@ -34,7 +34,7 @@ guessing.
 | **Reserves** | Proof-of-Reserve and fund NAV levels | Chainlink PoR feeds |
 | **AMM** | same crypto questions, priced by a constant-product pool | same as Crypto |
 
-Alongside the markets, an **exchange** sells synthetic gold and S&P 500 tokens
+Alongside the markets, an **exchange** sells synthetic gold and S&P 500 ETF (CSPX) tokens
 priced by Chainlink Data Feeds. It is a different product with the same
 discipline: every order fills at the next *new* price the feed publishes, and a
 Chainlink DON fills orders on a schedule — see
