@@ -77,8 +77,9 @@ export PATH="$HOME/.cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
 cd contracts && forge test
 ```
 
-24 tests, incl. a 256-run fuzz on payout solvency. `via_ir = true` is required —
-the 12-field `Market` struct blows the stack otherwise.
+Counts per suite are in [Tests](#tests); the contract suite includes a 256-run
+fuzz on payout solvency. `via_ir = true` is required — the 12-field `Market`
+struct blows the stack otherwise.
 
 ## 2. Deploy to Sepolia
 
@@ -717,8 +718,8 @@ $63,000 strike, in tx
 ## The reconciliation sweep (cron trigger)
 
 The log-trigger design has a hole that has nothing to do with the code: **it
-needs someone to emit the log**. Every settlement in this project began with a
-human calling `requestSettlement()`. If the workflow was down when the event
+needs someone to emit the log**. Until SettlementKeeper (2026-10-08) every
+settlement in this project began with a human calling `requestSettlement()`. If the workflow was down when the event
 fired, or the settlement reverted, the market simply stays stuck — no second
 log is coming.
 
@@ -1323,9 +1324,9 @@ there is no event title on chain.
 
 | suite | count | command |
 |---|---|---|
-| contracts | 190 | `cd contracts && forge test` |
-| frontend | 177 | `cd frontend && bun run test` |
-| workflow | 58 | `cd cre/settlement && bun test` |
+| contracts | 206 | `cd contracts && forge test` |
+| frontend | 181 | `cd frontend && bun run test` |
+| workflow | 62 | `cd cre/settlement && bun test` |
 
 The frontend and workflow suites were added after a routing bug reached a
 user: writes branched on `categoryId` with the flight contract as the else, so
@@ -1353,10 +1354,10 @@ anvil --fork-url https://ethereum-sepolia-rpc.publicnode.com --port 8545
 
 ## Known gaps
 
-- **A market still has to be asked to settle.** A workflow's only on-chain
-  write is a signed report, so it cannot call `requestSettlement()`. Everything
-  after the request is unattended — the log trigger settles within seconds and
-  the thirty-minute sweep re-settles anything it missed.
+- **Automatic settlement is not instant.** SettlementKeeper requests a market
+  10–40 minutes after it becomes due (the finalized block's lag plus the
+  ten-minute schedule), and a flight six hours after, on purpose. It examines
+  only the newest 40 markets per contract.
 - `project.yaml` staging RPC points at `https://ethereum-sepolia-rpc.publicnode.com`
   (real Sepolia). Swap to a local anvil fork URL if rehearsing for free (see
   Appendix).

@@ -10,7 +10,7 @@ placeholder data anywhere in the app.
 
 > **Proof of concept. Not audited.** MockUSDC is freely mintable and nothing
 > here holds real value. See [Limitations](#limitations) for what is genuinely
-> unfinished, including the one thing that stops it running unattended.
+> unfinished.
 
 ---
 
@@ -30,7 +30,7 @@ guessing.
 |---|---|---|
 | **Flights** | arrival delay vs a threshold | AeroDataBox, via HTTPS |
 | **Crypto** | BTC/ETH vs a strike, 5 min to 1 hour | median of Coinbase, Kraken, Bitstamp |
-| **Stocks** | S&P 500 (CSPX), gold, treasury ETFs | Chainlink Data Feeds |
+| **Stocks** | S&P 500 ETF (CSPX), gold, treasury ETFs | Chainlink Data Feeds |
 | **Reserves** | Proof-of-Reserve and fund NAV levels | Chainlink PoR feeds |
 | **AMM** | same crypto questions, priced by a constant-product pool | same as Crypto |
 
@@ -48,7 +48,7 @@ Chainlink DON fills orders on a schedule — see
                     ┌──────────────────────────────────────┐
    real world ──▶   │  CRE workflow  (TypeScript → WASM)   │
    APIs, feeds      │                                      │
-                    │  4 log triggers + 3 cron sweeps      │
+                    │  4 log triggers + 5 crons            │
                     │  DON consensus on every value        │
                     └──────────────┬───────────────────────┘
                                    │ signed report
@@ -64,6 +64,10 @@ Chainlink DON fills orders on a schedule — see
    │  predates    │  ├ StockMarket     │  product)   │  stake       │
    │  the base)   │  └ ReserveMarket   │             │  token)      │
    └──────────────┴────────────────────┴─────────────┴──────────────┘
+   ┌───────────────────────────────┬─────────────────────────────────┐
+   │ AssetExchange                 │ SettlementKeeper                │
+   │ (synthetic gold, S&P 500 ETF) │ (requests settlement when due)  │
+   └───────────────────────────────┴─────────────────────────────────┘
                                    ▲
                                    │ viem, EIP-6963
                     ┌──────────────┴───────────────────────┐
@@ -89,8 +93,10 @@ Chainlink DON fills orders on a schedule — see
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
 family has been proven by reading `ReportProcessed(result = true)` off a
 settlement receipt rather than trusting the CLI. A cron sweep runs every thirty
-minutes and has done so unattended since 2026-09-20 without a single failed
-execution.
+minutes and has done so unattended since 2026-09-20; its only failed executions
+were three in one second on 2026-10-05, when every node lost its Sepolia RPC at
+once. Since 2026-10-08 settlement is also *requested* without anyone — see
+[the keeper](#nobody-presses-the-button-and-the-don-still-cannot-call-it).
 
 ---
 
@@ -246,6 +252,27 @@ round to the first genuine change. Since that round is fixed by the order,
 *when* a fill happens cannot change *what* it pays — so filling is open to
 anyone, and the DON is a keeper rather than a party that could steer a price.
 
+### Nobody presses the button, and the DON still cannot call it
+
+A market settles from the event `requestSettlement` emits, and the contracts
+accept a report only for a market already requested. The function is open to
+anyone — but a DON's only on-chain write is a signed report delivered to
+`onReport`, so the DON cannot be that anyone. For two months every settlement
+started with a person clicking.
+
+`SettlementKeeper` closes the gap without touching the five market contracts.
+Every ten minutes the workflow asks it which markets are due — one view call
+covering all five, against an execution budget of fifteen reads — and reports
+the ids back; the keeper makes the public call. The market emits its own
+`SettlementRequested` and the DON settles it exactly as after a click. The
+first run, on 2026-10-08, did both halves in 26 seconds with no one touching
+anything.
+
+The keeper has no more power than any wallet. What it adds is a delay, held in
+the contract so a report cannot get around it: **flights wait six hours past
+the earliest settlement time**, because a flight still airborne at settlement
+voids its market, and a long delay is exactly when Yes should win.
+
 ---
 
 ## Running it
@@ -257,11 +284,11 @@ export PATH="$HOME/.cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
 ```
 
 ```bash
-cd contracts && forge test                     # 190 tests
-cd frontend  && bun install && bun run test    # 177 tests
+cd contracts && forge test                     # 206 tests
+cd frontend  && bun install && bun run test    # 181 tests
 cd frontend  && bun run dev                    # the app, against live Sepolia
 cd frontend  && bun run snapshot               # refresh shipped chain history
-cd cre/settlement && bun test                  # 58 tests
+cd cre/settlement && bun test                  # 62 tests
 ```
 
 The app needs an RPC that serves `eth_getLogs` over a 10,000-block range. The

@@ -2,8 +2,8 @@ import { defineChain } from "viem";
 import { sepolia } from "viem/chains";
 
 /**
- * Deployed POC addresses on Ethereum Sepolia. Override via .env.local
- * (VITE_MARKET_ADDRESS / VITE_TOKEN_ADDRESS) when you redeploy.
+ * Deployed POC addresses on Ethereum Sepolia. Override any of them via
+ * .env.local (the VITE_* names below) when you redeploy.
  */
 export const FLIGHT_MARKET_ADDRESS = (import.meta.env.VITE_FLIGHT_MARKET_ADDRESS ??
   "0x09068efb21fabeac59694e01428cf438cf38e2b3") as `0x${string}`;
