@@ -121,11 +121,43 @@ for key, label in (
     ('reserveContractAddress', 'reserve'),
     ('ammContractAddress',     'amm    '),
     ('exchangeContractAddress', 'exchange'),
+    ('keeperContractAddress',  'keeper '),
 ):
     v = c.get(key) or ''
     if v:
         print(f'{label}={v}')
 ")
+
+# The keeper asks for settlement only on the market contracts it was told to
+# watch. One missing from that list is not an error anywhere: its markets just
+# go back to waiting for someone to press the button.
+keeper=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('keeperContractAddress') or '')")
+if [ -n "$keeper" ] && [ "$keeper" != "0x0000000000000000000000000000000000000000" ]; then
+  echo "  keeper watches every market contract"
+  watched=""
+  n=$(cast call "$keeper" 'watchedCount()(uint256)' --rpc-url "$RPC" 2>/dev/null || echo 0)
+  for i in $(seq 0 $((n - 1))); do
+    watched="$watched $(cast call "$keeper" 'watchedAt(uint256)(address,uint8,uint32)' "$i" --rpc-url "$RPC" 2>/dev/null | head -1)"
+  done
+  while IFS='=' read -r label address; do
+    [ -z "$address" ] && continue
+    if echo "$watched" | tr 'A-F' 'a-f' | grep -q "$(echo "$address" | tr 'A-F' 'a-f')"; then
+      printf '    \033[32mok\033[0m       %s\n' "$label"
+    else
+      printf '    \033[31mUNWATCHED\033[0m %s %s\n' "$label" "$address"; fail=1
+    fi
+  done < <(python3 -c "
+import json
+c = json.load(open('$CONFIG'))
+for key, label in (('flightContractAddress','flight'), ('cryptoContractAddress','crypto'),
+                   ('stockContractAddress','stock'), ('reserveContractAddress','reserve'),
+                   ('ammContractAddress','amm')):
+    v = c.get(key) or ''
+    if v and v != '0x' + '0' * 40:
+        print(f'{label}={v}')
+")
+  echo
+fi
 
 # The frontend keeps its own copy of every address, defaulted in config.ts and
 # overridable per environment. Nothing sits between the two files, so a

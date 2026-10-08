@@ -124,6 +124,14 @@ export type Config = {
    * fills orders automatically, so it runs more often.
    */
   exchangeSchedule?: string
+  /**
+   * SettlementKeeper address. Empty, or the zero address, leaves the
+   * automatic settlement requester unregistered — markets then wait for
+   * someone to press "Request settlement", as they did before it existed.
+   */
+  keeperContractAddress?: string
+  /** Cron schedule for asking the keeper what is due, six-field form. */
+  keeperSchedule?: string
   gasLimit: string
 }
 
@@ -1993,6 +2001,102 @@ export const onFillOrders = (runtime: Runtime<Config>): string => {
   return txHash
 }
 
+// --- automatic settlement requests -------------------------------------------
+
+/**
+ * Settlement used to need a person: the market contracts accept a report only
+ * for a market in SettlementRequested, and only `requestSettlement` puts it
+ * there. That call is open to anyone, but a DON report cannot make it — reports
+ * go to `onReport`. SettlementKeeper is the bridge: this handler asks it which
+ * markets are due, and reports their ids back; the keeper makes the public call,
+ * the market emits its usual SettlementRequested, and the log handlers above
+ * settle it exactly as if the button had been pressed.
+ *
+ * What counts as due lives in the CONTRACT, including the six-hour wait for
+ * flights (a flight still airborne at settlement voids, which is precisely the
+ * outcome a long delay must not get). So this handler decides nothing; it
+ * relays. One chain read covers all five market contracts.
+ *
+ * Reads are pinned to the finalized block like every sweep, so a run can name
+ * a market the previous run already requested. The keeper re-checks each id at
+ * execution and skips those quietly; the cost is one wasted report, not a
+ * wrong one.
+ */
+const keeperAbi = [
+  {
+    type: "function",
+    name: "dueMarkets",
+    stateMutability: "view",
+    inputs: [{ name: "max", type: "uint256" }],
+    outputs: [
+      { name: "markets", type: "address[]" },
+      { name: "ids", type: "uint256[]" },
+    ],
+  },
+] as const
+
+/** Requests per keeper report. One costs ~33k gas on Sepolia. */
+export const KEEPER_REQUESTS_PER_REPORT = 5
+
+/** Gas for one keeper report: five requests plus the keeper's own re-checks. */
+const KEEPER_GAS_LIMIT = "1500000"
+
+/** The report `SettlementKeeper._processReport` decodes. */
+export const encodeKeeperReport = (
+  markets: readonly `0x${string}`[],
+  ids: readonly bigint[],
+): `0x${string}` =>
+  encodeAbiParameters(parseAbiParameters("address[] markets, uint256[] ids"), [markets, ids])
+
+export const onRequestDue = (runtime: Runtime<Config>): string => {
+  const address = runtime.config.keeperContractAddress ?? ""
+  if (address === "" || address === ZERO_ADDRESS) return "no keeper configured"
+
+  const evmClient = sweepEvm(runtime)
+  const reads = newReadBudget()
+  const atBlock = finalizedBlock(runtime, evmClient, reads)
+
+  const [markets, ids] = decodeFunctionResult({
+    abi: keeperAbi,
+    functionName: "dueMarkets",
+    data: ethCall(
+      runtime,
+      evmClient,
+      address,
+      encodeFunctionData({
+        abi: keeperAbi,
+        functionName: "dueMarkets",
+        args: [BigInt(KEEPER_REQUESTS_PER_REPORT)],
+      }),
+      atBlock,
+      reads,
+    ),
+  }) as readonly [readonly `0x${string}`[], readonly bigint[]]
+
+  if (ids.length === 0) {
+    runtime.log(`Keeper at block ${atBlock}: nothing due`)
+    return "nothing due"
+  }
+
+  const due = ids.map((id, i) => `${markets[i]}#${id}`).join(", ")
+  runtime.log(`Keeper at block ${atBlock}: requesting settlement of ${due}`)
+  const signedReport = runtime.report(prepareReportRequest(encodeKeeperReport(markets, ids))).result()
+  const txResult = evmClient
+    .writeReport(runtime, {
+      receiver: address,
+      report: signedReport,
+      gasConfig: { gasLimit: KEEPER_GAS_LIMIT },
+    })
+    .result()
+
+  if (txResult.txStatus !== TxStatus.SUCCESS) {
+    throw new Error(`Keeper write failed: ${txResult.errorMessage || txResult.txStatus}`)
+  }
+  const txHash = bytesToHex(txResult.txHash ?? new Uint8Array(32))
+  runtime.log(`Requested settlement of ${due} in tx ${txHash}`)
+  return txHash
+}
+
 // --- reserve settlement, from a Chainlink PoR / NAV feed ---------------------
 //
 // Deliberately not a flag on the stock path. The equity rule — void unless the
@@ -2269,6 +2373,15 @@ export const initWorkflow = (config: Config) => {
   if (exchange !== "" && exchange !== ZERO_ADDRESS && config.exchangeSchedule) {
     handlers.push(
       handler(new CronCapability().trigger({ schedule: config.exchangeSchedule }), onFillOrders),
+    )
+  }
+
+  // The automatic settlement requester, after the filler for the same reason:
+  // appended, so no existing index moves.
+  const keeper = config.keeperContractAddress ?? ""
+  if (keeper !== "" && keeper !== ZERO_ADDRESS && config.keeperSchedule) {
+    handlers.push(
+      handler(new CronCapability().trigger({ schedule: config.keeperSchedule }), onRequestDue),
     )
   }
 

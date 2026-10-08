@@ -38,7 +38,7 @@ actually happened.
 
 ```bash
 cd frontend && bun run snapshot                      # refresh shipped history
-cd cre && ./preflight.sh production                  # 15 green rows
+cd cre && ./preflight.sh production                  # every row green
 cre execution list predictsafe-settlement --status FAILURE   # expect none
 cd frontend && bun run build                         # ships public/ too
 ```
@@ -120,6 +120,26 @@ a failed delivery, not by reading a flag description:**
   placeholder the CLI uses for the metadata's `workflowOwner` field when there is
   no linked owner key (`cre account list-key` → "No linked owners found"). Swap
   this for the real linked owner address once one exists.
+
+### Sepolia changed under forge's gas estimate (measured 2026-10-08)
+
+Deploying `SettlementKeeper` failed twice with `status 0` and every unit of gas
+spent — 2.28M, then 3.51M with a doubled estimate — while `cast run` replayed
+the same transaction locally as a success at about 1.9M. The node's own
+`eth_estimateGas` asked for **12.3M**. Sepolia blocks now carry a
+`blockAccessListHash`, i.e. a newer fork than forge 1.7.1's EVM, and contract
+creation is priced far higher there. Two things follow:
+
+- **Use `--skip-simulation`** with `forge script --broadcast`, so each
+  transaction's gas comes from the node rather than from forge's local EVM.
+  `--gas-estimate-multiplier` cannot fix it — it multiplies the wrong number.
+- **Use `--slow`.** The deployer address carries an EIP-7702 delegation
+  (code `0xef0100…`, set by a wallet, not by this project), and Sepolia allows
+  a delegated account one transaction in flight: a batch fails with
+  `in-flight transaction limit reached for delegated accounts`.
+
+Ordinary calls are unaffected in practice: `requestSettlement` estimates at
+~33k on the node.
 
 ### Check it landed, before trusting it
 
@@ -631,6 +651,7 @@ contract address in `config.staging.json` populated:
 | 5 | cron sweep, crypto |
 | 6 | cron sweep, stocks |
 | 7 | cron, exchange order filler (only with `exchangeContractAddress` and `exchangeSchedule` set) |
+| 8 | cron, automatic settlement requests (only with `keeperContractAddress` and `keeperSchedule` set) |
 
 **These numbers are positions in a list built at runtime, not fixed ids.**
 `initWorkflow` pushes a handler only when its contract address is non-empty
@@ -812,15 +833,10 @@ reading every market's status directly rather than by trusting the log.
 
 ### What it does not fix
 
-The sweep removes the human from *running the workflow*. It does not remove the
-human from *calling `requestSettlement()`* — a CRE workflow's only on-chain
-write is a signed report to `onReport()`, so it cannot make that call. Full
-autonomy needs `_processReport` to accept a report for any market past
-`settleAfter`, dropping the request step entirely. That is a change to
-`ParimutuelMarket`, so it lands whenever the contracts are next redeployed;
-`requestSettlement` exists only to give a log trigger something to listen to,
-and adds nothing to authorisation, which is already forwarder + author +
-workflow name.
+The sweep removes the human from *running the workflow*. On its own it does not
+remove the human from *calling `requestSettlement()`* — a CRE workflow's only
+on-chain write is a signed report to `onReport()`, so it cannot make that call.
+SettlementKeeper does, below.
 
 ## The local settlement path is retired
 
@@ -1018,6 +1034,56 @@ restarts round numbering and is deliberately not searched.
 before the name, lists both feeds and seeds the reserve. Then put the address
 in `exchangeContractAddress` in the workflow config and in `EXCHANGE_ADDRESS`
 in `frontend/src/lib/config.ts`; `preflight.sh` checks both.
+
+## Automatic settlement requests (SettlementKeeper)
+
+`SettlementKeeper` at `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` asks for
+settlement on markets whose time has come, so nobody has to press the button.
+
+Every market contract lets ANYONE call `requestSettlement` once `settleAfter`
+has passed; the DON settles from the event that call emits. The DON cannot make
+the call itself — a report goes to `onReport`, and a market accepts a report
+only once it is already in SettlementRequested. So the workflow reports to the
+keeper, and the keeper makes the public call. The market emits its own
+`SettlementRequested`, and the log handlers settle it exactly as they would
+after a click: nothing downstream can tell the two apart.
+
+The keeper holds no money and gains nothing by being the caller. What it adds
+is a per-contract delay on top of `settleAfter`, **enforced in the contract** so
+a report cannot get around it:
+
+| contract | kind | delay |
+|---|---|---|
+| FlightMarket | Flight | 6 hours |
+| CryptoMarket, StockMarket, ReserveMarket | Parimutuel | none |
+| AmmMarket | Amm | none |
+
+Flights wait because a flight still in the air at settlement voids its market,
+and a long delay is exactly when a Yes should win. A person can still press the
+button at `settleAfter`; the keeper will not.
+
+**Trigger index 8** runs on `keeperSchedule` (`0 2,12,22,32,42,52 * * * *`,
+off the sweeps' :00/:30 and the filler's :05), reads `dueMarkets(5)` at the
+last finalized block — one chain read for all five contracts, against a budget
+of fifteen — and reports `abi.encode(address[] markets, uint256[] ids)`. The
+keeper re-checks each id at execution and skips any that are no longer due
+with `SettlementRequestSkipped(…, "not due")`. That is the expected outcome
+for a market named twice because the finalized block had not caught up with
+the previous request; it costs a wasted report, not a wrong one.
+
+`dueMarkets` looks at the newest 40 markets per contract (`SCAN_BACK`). An
+older market still open past its time is weeks stale and is left to a person.
+
+```bash
+K=0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43
+cast call $K 'dueMarkets(uint256)(address[],uint256[])' 10 --rpc-url $RPC   # what it would ask for now
+cast call $K 'isDue(address,uint256)(bool)' <market contract> <id> --rpc-url $RPC
+cast call $K 'watchedAt(uint256)(address,uint8,uint32)' 0 --rpc-url $RPC      # kind 0/1/2, delay in s
+```
+
+`preflight.sh` checks the keeper's forwarder, author and name like any
+receiver, and that it watches every market contract in the config — one left
+off the list is silent: its markets simply go back to waiting for a click.
 
 ## Reserve markets (Proof of Reserve / fund NAV)
 

@@ -428,15 +428,24 @@ export function TradePanel({
       )}
 
       {canRequestSettlement(market, now) && (
-        <button
-          className="btn"
-          style={{ width: "100%" }}
-          disabled={busy !== null}
-          onClick={() => void run("settling", (a) => sendRequestSettlement(a, market))}
-          title="Emits SettlementRequested, which is what the CRE workflow listens for"
-        >
-          {busy === "settling" ? "Requesting…" : "Request settlement"}
-        </button>
+        <>
+          <button
+            className="btn"
+            style={{ width: "100%" }}
+            disabled={busy !== null}
+            onClick={() => void run("settling", (a) => sendRequestSettlement(a, market))}
+            title="Emits SettlementRequested, which is what the CRE workflow listens for"
+          >
+            {busy === "settling" ? "Requesting…" : "Request settlement"}
+          </button>
+          {/* SettlementKeeper asks on everyone's behalf; the button is only
+              for not waiting. Flights wait six hours so a late one has landed. */}
+          <div className="muted-strong" style={{ fontSize: 11, marginTop: -4 }}>
+            {market.categoryId === "flights"
+              ? "Requested automatically six hours after this point, so a late flight has landed. Press to do it now."
+              : "Requested automatically within about 40 minutes. Press to do it now."}
+          </div>
+        </>
       )}
 
       {/*

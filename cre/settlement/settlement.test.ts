@@ -24,6 +24,9 @@ import {
   retryDelayMs,
   onFillOrders,
   encodeFillReport,
+  onRequestDue,
+  encodeKeeperReport,
+  KEEPER_REQUESTS_PER_REPORT,
 } from "./main"
 
 /**
@@ -652,5 +655,66 @@ describe("exchange order filler", () => {
     const encoded = encodeFillReport([3n, 7n])
     const [ids] = decodeAbiParameters(parseAbiParameters("uint256[]"), encoded)
     expect(ids).toEqual([3n, 7n])
+  })
+})
+
+/**
+ * The automatic settlement requester. It decides nothing — what is due, and
+ * the six-hour wait for flights, live in SettlementKeeper — so what is worth
+ * pinning here is where it sits in the trigger list and the exact shape of
+ * the report the contract decodes.
+ */
+describe("automatic settlement requester", () => {
+  const base = {
+    flightContractAddress: "0x0900000000000000000000000000000000000001",
+    chainSelectorName: "ethereum-testnet-sepolia",
+    apiUrl: "https://example.invalid",
+    apiKey: "unused",
+    gasLimit: "1000000",
+    cryptoContractAddress: "0x0900000000000000000000000000000000000002",
+    stockContractAddress: "0x0900000000000000000000000000000000000003",
+    reserveContractAddress: "0x0900000000000000000000000000000000000004",
+    sweepSchedule: "0 0,30 * * * *",
+    exchangeContractAddress: "0x0900000000000000000000000000000000000006",
+    exchangeSchedule: "0 5,15,25,35,45,55 * * * *",
+  }
+  const fns = (extra: Record<string, string>) =>
+    initWorkflow({ ...base, ...extra } as Config).map((h) => h.fn)
+
+  test("is appended after the exchange filler, moving no existing index", () => {
+    const withKeeper = fns({
+      keeperContractAddress: "0x0900000000000000000000000000000000000007",
+      keeperSchedule: "0 2,12,22,32,42,52 * * * *",
+    })
+    const without = fns({})
+    expect(withKeeper.slice(0, without.length)).toEqual(without)
+    expect(without.at(-1)).toBe(onFillOrders)
+    expect(withKeeper.at(-1)).toBe(onRequestDue)
+    expect(withKeeper).toHaveLength(without.length + 1)
+  })
+
+  test("is not registered without a schedule, or with the zero address", () => {
+    expect(fns({ keeperContractAddress: "0x0900000000000000000000000000000000000007" })).not.toContain(onRequestDue)
+    expect(
+      fns({
+        keeperContractAddress: "0x0000000000000000000000000000000000000000",
+        keeperSchedule: "0 2,12,22,32,42,52 * * * *",
+      }),
+    ).not.toContain(onRequestDue)
+  })
+
+  /** `abi.decode(report, (address[], uint256[]))`, pairs in order. */
+  test("encodes market contracts and ids as parallel arrays", () => {
+    const crypto = "0x8DA11eb17D5F3f4427aA3017E95e50b132A210be"
+    const flights = "0x09068EFB21FaBeAc59694E01428cF438Cf38e2b3"
+    const encoded = encodeKeeperReport([crypto, flights], [0n, 17n])
+    const [markets, ids] = decodeAbiParameters(parseAbiParameters("address[], uint256[]"), encoded)
+    expect(markets).toEqual([crypto, flights])
+    expect(ids).toEqual([0n, 17n])
+  })
+
+  test("asks for no more than one report can carry", () => {
+    expect(KEEPER_REQUESTS_PER_REPORT).toBeGreaterThan(0)
+    expect(KEEPER_REQUESTS_PER_REPORT).toBeLessThanOrEqual(5)
   })
 })

@@ -83,6 +83,7 @@ Chainlink DON fills orders on a schedule — see
 | MockUSDC | `0xcd123a8d74ef062dddd2287e87bc88eb3b208b54` |
 | AssetExchange | `0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D` |
 | sXAU / sCSPX | `0xF08cC188Ed24d8dFDd62445cA88D84775aD792e1` / `0xA82D955E2e8B855aE83CBf10468772c4e1E1C64E` |
+| SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -280,13 +281,16 @@ suggests, and which cost an afternoon to find.
 Stated plainly, because a POC that hides these is worse than one that does not
 have them.
 
-- **A market still has to be asked to settle.** A CRE workflow's only on-chain
-  write is a signed report, so it cannot call `requestSettlement()` itself —
-  someone presses the button, or calls it. Everything AFTER that is unattended:
-  the DON settles within seconds, and a cron sweep every thirty minutes
-  re-settles anything the log trigger missed. Full autonomy needs
-  `_processReport` to accept any market past its settle-after time, dropping
-  the request step.
+- **Settlement is automatic, not instant.** A CRE workflow's only on-chain
+  write is a signed report, so it cannot call `requestSettlement()` itself.
+  `SettlementKeeper` bridges that: every ten minutes the workflow asks it which
+  markets are due and reports their ids back, and the keeper makes the public
+  call anyone could make. The market then settles through the DON as if the
+  button had been pressed. Reads are pinned to the finalized block, which
+  trails Sepolia's head by about seventeen minutes, so a market settles some
+  twenty to forty minutes after it could have — and a flight six hours after,
+  deliberately, because a flight still in the air at settlement voids its
+  market. The button still works for anyone in a hurry.
 - **One flight data provider.** The two-source disagreement logic is built and
   tested, but the second slot was only ever exercised with a mock. The
   provider is a free RapidAPI tier, which works on a ten-node DON only because
