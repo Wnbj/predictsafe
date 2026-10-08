@@ -35,7 +35,49 @@ export interface CategoryDef {
   live: boolean;
   blurb: string;
   icon: (size: number) => ReactNode;
+  /** Cover photo under the icon, from Pexels — see public/img/CREDITS.md. */
+  image?: string;
 }
+
+const img = (file: string) => `${import.meta.env.BASE_URL}img/${file}`;
+
+/**
+ * A cover photo under a gradient of the page's background. `top`/`bottom` are
+ * that gradient's opacity: light where only an icon sits on the photo, heavy
+ * where text does. Without a photo it falls back to the plain surface
+ * gradient, which is what "coming soon" categories still show.
+ */
+export function coverBackground(image: string | undefined, top = 0.1, bottom = 0.55): string {
+  const plain = "linear-gradient(160deg, var(--color-surface), var(--color-neutral-900))";
+  if (!image) return plain;
+  return `linear-gradient(180deg, rgba(22, 24, 38, ${top}), rgba(22, 24, 38, ${bottom})), url("${image}") center / cover no-repeat`;
+}
+
+/**
+ * A category icon that stays readable on a photo: a dark disc behind it, and
+ * nothing extra where there is no photo to fight with.
+ */
+export function CoverIcon({ cat, size = 44 }: { cat: CategoryDef; size?: number }) {
+  if (!cat.image) return <>{cat.icon(size)}</>;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        borderRadius: "50%",
+        background: "rgba(22, 24, 38, 0.72)",
+        boxShadow: "0 0 0 1px rgba(255, 255, 255, 0.06), 0 4px 14px rgba(0, 0, 0, 0.45)",
+      }}
+    >
+      {cat.icon(size)}
+    </span>
+  );
+}
+
+/** Photos for the exchange's assets, keyed by feed symbol. */
+export const ASSET_IMAGES: Record<string, string> = {
+  XAU: img("gold.jpg"),
+  CSPX: img("spx.jpg"),
+};
 
 const planeIcon = (size: number) => (
   <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
@@ -139,6 +181,7 @@ export const CATEGORIES: CategoryDef[] = [
     live: true,
     blurb: "Flight-delay markets settled by a Chainlink CRE workflow.",
     icon: planeIcon,
+    image: img("flights.jpg"),
   },
   {
     id: "sports",
@@ -155,6 +198,7 @@ export const CATEGORIES: CategoryDef[] = [
     live: true,
     blurb: "BTC and ETH price levels, settled on median exchange data.",
     icon: cryptoIcon,
+    image: img("crypto.jpg"),
   },
   {
     id: "stocks",
@@ -163,6 +207,7 @@ export const CATEGORIES: CategoryDef[] = [
     live: true,
     blurb: "Index and commodity levels, settled from Chainlink Data Feeds.",
     icon: stocksIcon,
+    image: img("stocks.jpg"),
   },
   {
     id: "reserves",
@@ -171,6 +216,7 @@ export const CATEGORIES: CategoryDef[] = [
     live: true,
     blurb: "Proof-of-Reserve and fund NAV levels, settled from Chainlink feeds.",
     icon: reservesIcon,
+    image: img("reserves.jpg"),
   },
   {
     id: "amm",
@@ -179,6 +225,7 @@ export const CATEGORIES: CategoryDef[] = [
     live: true,
     blurb: "Same questions, priced by a market maker — your price is locked when you buy.",
     icon: ammIcon,
+    image: img("amm.jpg"),
   },
   {
     id: "pop",

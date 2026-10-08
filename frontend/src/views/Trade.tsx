@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Address } from "viem";
+import { ASSET_IMAGES, coverBackground } from "../lib/categories";
 import { EXCHANGE_ADDRESS, TOKEN_SYMBOL, addressUrl } from "../lib/config";
 import { formatRelative, formatToken, parseToken, shortAddress } from "../lib/format";
 import { sendApprove, sendMint, waitForTx } from "../lib/chain";
@@ -163,6 +164,7 @@ function AssetCard({
         font: "inherit",
         color: "inherit",
         border: selected ? "1px solid var(--color-accent)" : undefined,
+        background: coverBackground(ASSET_IMAGES[asset.symbol], 0.6, 0.94),
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>

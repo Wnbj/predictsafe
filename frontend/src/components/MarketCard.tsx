@@ -1,4 +1,4 @@
-import { category } from "../lib/categories";
+import { category, CoverIcon, coverBackground } from "../lib/categories";
 import { formatMarketValue, formatPercent, formatToken, statusLabel } from "../lib/format";
 import { impliedYesPercent, isOneSided, totalPool } from "../lib/pricing";
 import {
@@ -58,14 +58,13 @@ export function MarketCard({
           margin: "calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) 0",
           height: 110,
           borderRadius: "var(--radius-md) var(--radius-md) 0 0",
-          background:
-            "linear-gradient(160deg, var(--color-surface), var(--color-neutral-900))",
+          background: coverBackground(cat.image),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        {cat.icon(44)}
+        <CoverIcon cat={cat} />
       </div>
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>

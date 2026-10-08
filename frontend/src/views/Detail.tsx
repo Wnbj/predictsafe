@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { category } from "../lib/categories";
+import { category, coverBackground } from "../lib/categories";
 import { addressUrl, ATTESTATION_LABEL, txUrl, attestationFor} from "../lib/config";
 import { formatDepartureDate, formatMarketValue, formatPercent, formatTimestamp, formatToken, outcomeLabel, shortAddress, statusLabel } from "../lib/format";
 import {
@@ -141,17 +141,30 @@ export function Detail({
         Back to markets
       </a>
 
-      <div>
-        <span className="tag" style={{ ...cat.tagStyle, marginBottom: "var(--space-2)" }}>
-          {cat.name}
-        </span>
-      </div>
-      <h1
-        className="heading"
-        style={{ fontSize: 36, lineHeight: 1.1, maxWidth: 760, margin: "0 0 var(--space-2)" }}
+      <div
+        style={{
+          borderRadius: "var(--radius-lg)",
+          background: coverBackground(cat.image, 0.25, 0.9),
+          padding: "var(--space-6) var(--space-4) var(--space-4)",
+          marginBottom: "var(--space-4)",
+          minHeight: 140,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "flex-end",
+        }}
       >
-        {market.question}
-      </h1>
+        <div>
+          <span className="tag" style={{ ...cat.tagStyle, marginBottom: "var(--space-2)" }}>
+            {cat.name}
+          </span>
+        </div>
+        <h1
+          className="heading"
+          style={{ fontSize: 36, lineHeight: 1.1, maxWidth: 760, margin: 0 }}
+        >
+          {market.question}
+        </h1>
+      </div>
 
       <div className="detail-grid">
         <div>

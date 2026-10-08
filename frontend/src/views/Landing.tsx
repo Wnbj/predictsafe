@@ -1,6 +1,6 @@
 import { REPO_URL } from "../lib/config";
 import { useEffect, useMemo, useRef } from "react";
-import { CATEGORIES } from "../lib/categories";
+import { CATEGORIES, CoverIcon, coverBackground } from "../lib/categories";
 import { formatToken } from "../lib/format";
 import { impliedYesPercent, totalPool } from "../lib/pricing";
 import { groupIntoEvents, isLadder } from "../lib/events";
@@ -295,14 +295,13 @@ export function Landing({
                       margin: "calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) 0",
                       height: 92,
                       borderRadius: "var(--radius-md) var(--radius-md) 0 0",
-                      background:
-                        "linear-gradient(160deg, var(--color-surface), var(--color-neutral-900))",
+                      background: coverBackground(c.image),
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
                     }}
                   >
-                    {c.icon(44)}
+                    <CoverIcon cat={c} />
                   </div>
                   <span className="tag" style={c.tagStyle}>
                     {c.name}
