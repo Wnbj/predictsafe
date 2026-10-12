@@ -4,6 +4,9 @@ On-chain prediction markets on Ethereum Sepolia, settled by a **Chainlink CRE**
 workflow that fetches real-world data, reaches consensus across nodes and writes
 a signed report back to the contract.
 
+**Live:** [predictsafe-psi.vercel.app](https://predictsafe-psi.vercel.app/) —
+reads Sepolia directly; connect MetaMask on Sepolia to trade.
+
 Five live market categories, two different pricing models, one settlement
 mechanism. Everything on screen is read from chain — there is no seeded or
 placeholder data anywhere in the app.
