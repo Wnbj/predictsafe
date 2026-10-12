@@ -34,8 +34,18 @@ export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
 export const TOKEN_ADDRESS = (import.meta.env.VITE_TOKEN_ADDRESS ??
   "0xcd123a8d74ef062dddd2287e87bc88eb3b208b54") as `0x${string}`;
 
+/**
+ * A hosted build has no VITE_RPC_URL — it would ship the provider key to every
+ * visitor — and talks to its own `/api/rpc` proxy instead (frontend/api/rpc.ts).
+ * Local work sets VITE_RPC_URL in .env.local and goes to the node directly.
+ * Absolute either way, since viem is not promised to accept a relative URL.
+ */
+const rawRpcUrl =
+  import.meta.env.VITE_RPC_URL ??
+  (import.meta.env.PROD ? "/api/rpc" : "https://ethereum-sepolia-rpc.publicnode.com");
+
 export const RPC_URL =
-  import.meta.env.VITE_RPC_URL ?? "https://ethereum-sepolia-rpc.publicnode.com";
+  rawRpcUrl.startsWith("/") && typeof window !== "undefined" ? `${window.location.origin}${rawRpcUrl}` : rawRpcUrl;
 
 /**
  * Block the contracts were deployed in. Event scans start here instead of 0 —

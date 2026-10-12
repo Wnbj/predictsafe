@@ -65,28 +65,35 @@ showing.
 
 ## Hosting the frontend (Vercel)
 
-The app is a static site; `frontend/vercel.json` carries everything Vercel
-needs, so the project settings are only:
+The app is a static site plus one function; `frontend/vercel.json` carries the
+build, so the project settings are only:
 
 | setting | value |
 |---|---|
 | Root Directory | `frontend` |
 | Framework | Vite (read from `vercel.json`) |
-| Environment variable | `VITE_RPC_URL` — Production and Preview |
+| Environment variable | `RPC_UPSTREAM_URL` = the Infura Sepolia URL — **not** `VITE_RPC_URL` |
 
-`vercel.json` installs and builds with bun, rewrites every path to
-`index.html` so a reload on `/trade` or `/markets/crypto/13` does not 404
-(Vercel serves real files first), and caches hashed assets for a year, photos
-for a week and the log snapshot not at all.
+**The key never ships.** Every `VITE_` variable is compiled into the JavaScript
+each visitor downloads, and an Infura URL carries its key in its path. Infura's
+remedy, a second key restricted to the site's origin, needs a paid plan. So a
+hosted build has no `VITE_RPC_URL` and talks to `/api/rpc` — `frontend/api/rpc.ts`,
+a Vercel Function that forwards JSON-RPC to `RPC_UPSTREAM_URL` server-side. It
+passes read methods only (`eth_call`, `eth_getLogs`, block and receipt reads);
+signing goes through the visitor's wallet and never touches it. Locally,
+`.env.local` keeps `VITE_RPC_URL` and the app talks to the node directly. The
+same single key serves both, so it must **not** get an origin allowlist: local
+tools — `bun run snapshot`, `cast` — send no browser origin.
 
-**The RPC key is public once hosted.** Every `VITE_` variable is compiled into
-the JavaScript each visitor downloads. Give the site its own Infura key and
-restrict it to the site's origin in Infura's dashboard (*Allowlists →
-Origins*); keep a separate, unrestricted key in `.env.local` for local work
-and `bun run snapshot`, which send no browser origin.
+`vercel.json` also rewrites every path except `/api/` to `index.html`, so a
+reload on `/trade` or `/markets/crypto/13` does not 404 (Vercel serves real
+files first), and caches hashed assets for a year, photos for a week and the
+log snapshot not at all.
 
-**The free tier is shared by every visitor.** The app is sized for one person
-on it. Several at once will see 429s and slow loads.
+**The free tier is shared by every visitor**, and by your own local work. The
+app is sized for one person on it; several at once will see 429s and slow
+loads. Anyone can also spend the quota through `/api/rpc` — the same exposure a
+shipped key would have had, minus the key.
 
 A push to `main` redeploys. Before a demo: `bun run snapshot`, commit, push.
 
