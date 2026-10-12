@@ -64,6 +64,13 @@ The app is sized to fit a free tier, and most of `src/lib` exists for that:
 - **A shipped snapshot** (`public/logs-snapshot.json`) so a first visit scans
   only the tail. Re-run `bun run snapshot` before a demo.
 
+## Hosting
+
+Deployed on Vercel from this folder; `vercel.json` holds the build, the
+rewrite that keeps deep links working, and cache headers. Setup, and why the
+RPC key must be origin-restricted once hosted, is in RUNBOOK under "Hosting
+the frontend".
+
 ## Images
 
 Category and asset cover photos are in `public/img/`, from Pexels — credits in

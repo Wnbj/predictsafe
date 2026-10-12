@@ -63,6 +63,33 @@ each 10,000 blocks behind costs a first visit two more requests.
 seconds against the one key in `.env.local`. Close the ones you are not
 showing.
 
+## Hosting the frontend (Vercel)
+
+The app is a static site; `frontend/vercel.json` carries everything Vercel
+needs, so the project settings are only:
+
+| setting | value |
+|---|---|
+| Root Directory | `frontend` |
+| Framework | Vite (read from `vercel.json`) |
+| Environment variable | `VITE_RPC_URL` — Production and Preview |
+
+`vercel.json` installs and builds with bun, rewrites every path to
+`index.html` so a reload on `/trade` or `/markets/crypto/13` does not 404
+(Vercel serves real files first), and caches hashed assets for a year, photos
+for a week and the log snapshot not at all.
+
+**The RPC key is public once hosted.** Every `VITE_` variable is compiled into
+the JavaScript each visitor downloads. Give the site its own Infura key and
+restrict it to the site's origin in Infura's dashboard (*Allowlists →
+Origins*); keep a separate, unrestricted key in `.env.local` for local work
+and `bun run snapshot`, which send no browser origin.
+
+**The free tier is shared by every visitor.** The app is sized for one person
+on it. Several at once will see 429s and slow loads.
+
+A push to `main` redeploys. Before a demo: `bun run snapshot`, commit, push.
+
 ## Toolchain
 
 None of these are on the default PATH:
