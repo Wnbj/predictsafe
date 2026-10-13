@@ -8,6 +8,7 @@ import { Landing } from "./views/Landing";
 import { Markets } from "./views/Markets";
 import { Detail } from "./views/Detail";
 import { Portfolio } from "./views/Portfolio";
+import { MarketsSkeleton } from "./components/MarketsSkeleton";
 import { Leaderboard } from "./views/Leaderboard";
 import { Live } from "./views/Live";
 import { Trade } from "./views/Trade";
@@ -135,6 +136,16 @@ export default function App() {
         </div>
       )}
 
+      {data.stale && (
+        <div
+          className="muted"
+          style={{ padding: "6px var(--page-x)", fontSize: 12 }}
+          role="status"
+        >
+          Showing markets from your last visit · updating from Sepolia…
+        </div>
+      )}
+
       {!data.error && data.historyDegraded && (
         <div
           style={{
@@ -159,14 +170,14 @@ export default function App() {
         // market half of the page shows its own loading line instead.
         <Portfolio
           positions={data.positions}
-          marketsLoading={data.loading}
+          marketsLoading={data.loading || data.enriching}
           wallet={wallet}
           onOpenMarket={openMarket}
           onRefresh={data.refresh}
           onOpenTrade={() => navigate("trade")}
         />
       ) : data.loading ? (
-        <div className="page muted">Loading markets from Sepolia…</div>
+        <MarketsSkeleton />
       ) : (
         <>
           {view === "landing" && (
@@ -217,6 +228,7 @@ export default function App() {
 
           {view === "leaderboard" && (
             <Leaderboard
+              loading={data.enriching}
               markets={data.markets}
               tradeEvents={data.tradeEvents}
               lpEvents={data.lpEvents}

@@ -396,3 +396,26 @@ input:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* Loading placeholders: a surface-coloured block with a slow sheen. */
+.skeleton {
+  border-radius: var(--radius-sm, 6px);
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 0%,
+    color-mix(in srgb, var(--color-surface) 88%, white) 50%,
+    var(--color-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sheen 1.4s ease-in-out infinite;
+}
+.card .skeleton {
+  background-color: var(--color-neutral-900);
+}
+@keyframes skeleton-sheen {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}

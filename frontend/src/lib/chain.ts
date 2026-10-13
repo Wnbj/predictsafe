@@ -109,8 +109,26 @@ function pacedHttp(url: string, config: Parameters<typeof http>[1], lane: Lane =
   }) as typeof inner;
 }
 
+/**
+ * `aggregate3` batching — NOT the JSON-RPC batching the transport below turns
+ * off. Two things, both measured on the hosted site (2026-10-13) as 14 serial
+ * requests before the first market could render:
+ *
+ * - viem splits an explicit `multicall` into 1 KB chunks of calldata by
+ *   default, and a market contract's whole `core`/`terms` read is several KB,
+ *   so each became four or five requests, each a full slot in the paced queue.
+ * - Five `marketCount` reads fired together were five requests. With
+ *   `multicall` batching on, `readContract`s issued in the same tick fold into
+ *   one `aggregate3`.
+ *
+ * Every refusal still arrives as one HTTP 429 on one request, so nothing here
+ * reintroduces the bare-entry problem described on the transport.
+ */
+const MULTICALL_BATCH = { multicall: { batchSize: 256 * 1024 } } as const;
+
 export const publicClient = createPublicClient({
   chain,
+  batch: MULTICALL_BATCH,
   /*
    * Retries configured rather than left to chance, because a cold log scan is
    * a few hundred requests and every endpoint measured refuses some of them.
@@ -167,6 +185,7 @@ export const publicClient = createPublicClient({
  */
 export const priorityClient = createPublicClient({
   chain,
+  batch: MULTICALL_BATCH,
   transport: pacedHttp(RPC_URL, { retryCount: 5 }, "priority"),
 });
 

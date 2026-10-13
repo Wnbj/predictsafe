@@ -160,7 +160,7 @@ export function Portfolio({
 
       <div className="eyebrow" style={{ marginBottom: "var(--space-2)" }}>Prediction markets</div>
       {marketsLoading ? (
-        <div className="muted" style={{ fontSize: 13 }}>Loading markets from Sepolia…</div>
+        <div className="muted" style={{ fontSize: 13 }}>Loading your positions from Sepolia…</div>
       ) : (
         <>
         <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>

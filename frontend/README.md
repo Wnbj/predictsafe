@@ -63,6 +63,14 @@ The app is sized to fit a free tier, and most of `src/lib` exists for that:
   receivers per chunk, cached in localStorage as raw logs.
 - **A shipped snapshot** (`public/logs-snapshot.json`) so a first visit scans
   only the tail. Re-run `bun run snapshot` before a demo.
+- **Markets first, history after.** The pages render as soon as the markets
+  are read — eight requests, with `aggregate3` batches of up to 256 KB instead
+  of viem's 1 KB default — while history and the wallet's positions fill in.
+  Portfolio and Leaderboard wait for those, rather than claim "nothing here".
+- **Last visit's markets** (`marketCache.ts`) render at once on a return,
+  under a one-line "updating" notice, until this visit's read replaces them.
+  The key carries the build's chunk URL, so a deploy never feeds old shapes to
+  new code. A first visit shows card outlines instead.
 
 ## Hosting
 

@@ -5,11 +5,14 @@ import { deriveTraders } from "../hooks/useChainData";
 import type { LpEvent, Market, TradeEvent } from "../lib/types";
 
 export function Leaderboard({
+  loading,
   markets,
   tradeEvents,
   lpEvents,
   account,
 }: {
+  /** Trade history still arriving: an empty board would be a false "no traders". */
+  loading: boolean;
   markets: Market[];
   tradeEvents: TradeEvent[];
   lpEvents: LpEvent[];
@@ -33,7 +36,9 @@ export function Leaderboard({
         from on-chain events — no off-chain scoring.
       </p>
 
-      {traders.length === 0 ? (
+      {loading && traders.length === 0 ? (
+        <div className="muted" style={{ fontSize: 13 }}>Loading trade history from Sepolia…</div>
+      ) : traders.length === 0 ? (
         <div className="card" style={{ maxWidth: 520 }}>
           <div className="heading" style={{ fontSize: 17 }}>
             No traders yet

@@ -11,6 +11,7 @@ import {
   readWalletStakes,
 } from "../lib/chain";
 import { claimablePayout } from "../lib/pricing";
+import { loadCachedMarkets, saveMarkets } from "../lib/marketCache";
 import { attributeFees, buildLpPosition, depositsByMarket } from "../lib/lp";
 import {
   MarketStatus,
@@ -32,7 +33,17 @@ export interface ChainData {
   balance: bigint;
   /** Keyed by spender (market contract) — ERC-20 allowance is per spender. */
   allowances: Map<string, bigint>;
+  /** True until the markets have been read once. Never set back afterwards. */
   loading: boolean;
+  /**
+   * True while event history and the wallet's positions are still arriving —
+   * on first load, and again when the account changes. Pages that would
+   * otherwise state "nothing here" (portfolio, leaderboard) wait on it; the
+   * rest render as soon as `loading` clears.
+   */
+  enriching: boolean;
+  /** Showing the previous visit's markets while this visit's read runs. */
+  stale: boolean;
   error: string | null;
   /**
    * Categories whose contract could not be read, named rather than merged into
@@ -288,7 +299,11 @@ export function deriveTraders(
 }
 
 export function useChainData(account: Address | null): ChainData {
-  const [markets, setMarkets] = useState<Market[]>([]);
+  // Last visit's markets, if any, so a returning visitor sees the board at
+  // once; `stale` stays true until this visit's own read replaces them.
+  const [cached] = useState(() => loadCachedMarkets());
+  const [markets, setMarkets] = useState<Market[]>(cached?.markets ?? []);
+  const [stale, setStale] = useState(cached !== null);
   const [tradeEvents, setTradeEvents] = useState<TradeEvent[]>([]);
   const [settledEvents, setSettledEvents] = useState<SettledEvent[]>([]);
   const [lpEvents, setLpEvents] = useState<LpEvent[]>([]);
@@ -296,7 +311,8 @@ export function useChainData(account: Address | null): ChainData {
   const [balance, setBalance] = useState<bigint>(0n);
   /** Keyed by spender (market contract) — ERC-20 allowance is per spender. */
   const [allowances, setAllowances] = useState<Map<string, bigint>>(new Map());
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(cached === null);
+  const [enriching, setEnriching] = useState(true);
   const [failedCategories, setFailedCategories] = useState<
     { categoryId: string; message: string }[]
   >([]);
@@ -315,6 +331,12 @@ export function useChainData(account: Address | null): ChainData {
       const { markets: ms, failed } = await readMarkets();
       setMarkets(ms);
       setFailedCategories(failed);
+      setStale(false);
+      // Only a complete read is worth handing to the next visit.
+      if (failed.length === 0) saveMarkets(ms);
+      // The markets ARE the page. History and positions fill in behind them;
+      // gating on all of it kept "Loading markets" up for the whole log scan.
+      setLoading(false);
 
       const [se, sv, lp] = await Promise.all([
         readTradeEvents().catch(() => null),
@@ -347,11 +369,14 @@ export function useChainData(account: Address | null): ChainData {
       setError(e instanceof Error ? e.message : "Failed to load chain data");
     } finally {
       setLoading(false);
+      setEnriching(false);
     }
   }, [account]);
 
+  // Not `setLoading(true)`: connecting a wallet used to blank every page back
+  // to "Loading markets" while markets that had not changed were read again.
   useEffect(() => {
-    setLoading(true);
+    setEnriching(true);
     void refresh();
   }, [refresh]);
 
@@ -364,6 +389,8 @@ export function useChainData(account: Address | null): ChainData {
     balance,
     allowances,
     loading,
+    enriching,
+    stale,
     error,
     failedCategories,
     historyDegraded,
