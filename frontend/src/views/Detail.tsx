@@ -166,60 +166,63 @@ export function Detail({
         </h1>
       </div>
 
+      {/* Above the grid, not inside its left column: there it pushed the chart
+          down a row while the side panels started at the top, so the two
+          columns never lined up. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: "var(--space-4)",
+          marginBottom: "var(--space-4)",
+          flexWrap: "wrap",
+        }}
+      >
+        {/* An em-dash at 44px reads as a stray rule, not as "no data yet". */}
+        {yes === null ? (
+          <div className="heading muted" style={{ fontSize: 22 }}>
+            No odds yet
+          </div>
+        ) : (
+          <>
+            <div className="heading" style={{ fontSize: 44, color: "var(--color-accent)" }}>
+              {formatPercent(yes)}
+            </div>
+            {/* A compact trend chip next to the number it explains, rather
+                than a full-width chart with nothing around it to anchor
+                what it is. */}
+            <div
+              title="Implied chance of Yes over time"
+              style={{ width: 76, height: 32, flexShrink: 0 }}
+            >
+              <Sparkline market={market} events={tradeEvents} height={32} strokeWidth={1.5} />
+            </div>
+          </>
+        )}
+        <div className="muted" style={{ fontSize: 13 }}>
+          {yes === null ? "first stake sets the price" : "implied chance of Yes"} ·{" "}
+          {formatToken(totalPool(market))} staked
+          {market.status !== MarketStatus.Open && ` · ${statusLabel(market.status)}`}
+        </div>
+      </div>
+
+      {market.status === MarketStatus.Open && (
+        <div
+          style={{
+            display: "flex",
+            gap: "var(--space-6)",
+            flexWrap: "wrap",
+            alignItems: "baseline",
+            marginBottom: "var(--space-4)",
+          }}
+        >
+          <Countdown market={market} size={15} />
+          <LivePrice market={market} size={15} />
+        </div>
+      )}
+
       <div className="detail-grid">
         <div>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "baseline",
-              gap: "var(--space-4)",
-              marginBottom: "var(--space-4)",
-              flexWrap: "wrap",
-            }}
-          >
-            {/* An em-dash at 44px reads as a stray rule, not as "no data yet". */}
-            {yes === null ? (
-              <div className="heading muted" style={{ fontSize: 22 }}>
-                No odds yet
-              </div>
-            ) : (
-              <>
-                <div className="heading" style={{ fontSize: 44, color: "var(--color-accent)" }}>
-                  {formatPercent(yes)}
-                </div>
-                {/* A compact trend chip next to the number it explains, rather
-                    than a full-width chart with nothing around it to anchor
-                    what it is. */}
-                <div
-                  title="Implied chance of Yes over time"
-                  style={{ width: 76, height: 32, flexShrink: 0 }}
-                >
-                  <Sparkline market={market} events={tradeEvents} height={32} strokeWidth={1.5} />
-                </div>
-              </>
-            )}
-            <div className="muted" style={{ fontSize: 13 }}>
-              {yes === null ? "first stake sets the price" : "implied chance of Yes"} ·{" "}
-              {formatToken(totalPool(market))} staked
-              {market.status !== MarketStatus.Open && ` · ${statusLabel(market.status)}`}
-            </div>
-          </div>
-
-          {market.status === MarketStatus.Open && (
-            <div
-              style={{
-                display: "flex",
-                gap: "var(--space-6)",
-                flexWrap: "wrap",
-                alignItems: "baseline",
-                marginBottom: "var(--space-4)",
-              }}
-            >
-              <Countdown market={market} size={15} />
-              <LivePrice market={market} size={15} />
-            </div>
-          )}
-
           {isPriceMarket(market) && <PriceChart market={market} />}
 
           {ladder && (
