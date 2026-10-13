@@ -452,3 +452,170 @@ input:focus {
 @media (prefers-reduced-motion: reduce) {
   .skeleton { animation: none; }
 }
+
+/* Transaction notices: bottom-right on a desk, full width on a phone. */
+.toaster {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+}
+.toast {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-md);
+}
+.toast-spin {
+  display: inline-block;
+  animation: toast-spin 1.2s linear infinite;
+}
+@keyframes toast-spin {
+  to { transform: rotate(360deg); }
+}
+@media (max-width: 720px) {
+  .toaster {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    width: auto;
+    max-width: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-spin { animation: none; }
+}
+
+/* Navigation: inline links on a desk, a menu button and drawer on a phone. */
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.nav-burger,
+.nav-drawer {
+  display: none;
+}
+@media (max-width: 720px) {
+  .nav-links,
+  .nav-balance {
+    display: none !important;
+  }
+  .nav-burger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-divider);
+    background: transparent;
+    color: var(--color-text);
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .nav-drawer {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: sticky;
+    top: 53px;
+    z-index: 19;
+    padding: 6px var(--page-x) 12px;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-divider);
+  }
+  .nav-drawer a {
+    padding: 10px 0;
+    font-size: 16px !important;
+  }
+}
+
+/* A wide table read as a list of cards on a phone: each row a card, each cell
+   a "label · value" line, the label taken from the cell's data-label. */
+@media (max-width: 720px) {
+  table.stack-on-mobile thead {
+    display: none;
+  }
+  table.stack-on-mobile,
+  table.stack-on-mobile tbody,
+  table.stack-on-mobile tr,
+  table.stack-on-mobile td {
+    display: block;
+    width: 100%;
+  }
+  table.stack-on-mobile tr {
+    margin-bottom: var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+  table.stack-on-mobile td {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: 4px 0;
+    border: none;
+    text-align: right;
+  }
+  table.stack-on-mobile td::before {
+    content: attr(data-label);
+    color: color-mix(in srgb, var(--color-text) 55%, transparent);
+    font-size: 12px;
+    text-align: left;
+    flex-shrink: 0;
+  }
+  table.stack-on-mobile td[data-label="Market"] {
+    display: block;
+    text-align: left;
+    font-weight: 600;
+    padding-bottom: 8px;
+  }
+  table.stack-on-mobile td[data-label="Market"]::before {
+    content: none;
+  }
+}
+
+/* A glossary term: dotted underline, explanation on hover or focus. */
+.term {
+  position: relative;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+  outline: none;
+}
+.term-tip {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  width: max-content;
+  max-width: min(300px, 80vw);
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-neutral-800);
+  color: var(--color-text);
+  box-shadow: var(--shadow-md);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: normal;
+  text-align: left;
+}
+.term:hover .term-tip,
+.term:focus .term-tip,
+.term:focus-within .term-tip {
+  display: block;
+}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Address } from "viem";
+import { txLabel } from "../lib/toasts";
 import { TOKEN_SYMBOL, txUrl } from "../lib/config";
 import { formatToken, formatSigned, parseToken } from "../lib/format";
 import {
@@ -90,7 +91,7 @@ export function LiquidityPanel({
     try {
       const hash = await fn(account);
       setLastTx(hash);
-      await waitForTx(hash);
+      await waitForTx(hash, txLabel(label));
       await onDone();
     } catch (e) {
       setError(friendlyError(e));
@@ -107,7 +108,7 @@ export function LiquidityPanel({
       try {
         const h = await sendApprove(account, market.contract, amount);
         setLastTx(h);
-        await waitForTx(h);
+        await waitForTx(h, "Approval");
       } catch (e) {
         setError(friendlyError(e));
         setBusy(null);

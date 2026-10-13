@@ -37,6 +37,31 @@ export function Nav({
 }) {
   const isActive = (v: View) =>
     v === "markets" ? view === "markets" || view === "detail" : view === v;
+  // Phones only (CSS decides): five links and a wallet button wrapped onto two
+  // rows of a sticky bar, eating a fifth of a small screen on every page.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const go = (v: View) => {
+    setMenuOpen(false);
+    onNavigate(v);
+  };
+  const link = (l: { view: View; label: string }) => (
+    <a
+      key={l.view}
+      href="#"
+      onClick={(e) => {
+        e.preventDefault();
+        go(l.view);
+      }}
+      aria-current={isActive(l.view) ? "page" : undefined}
+      style={{
+        fontSize: 14,
+        textDecoration: "none",
+        color: isActive(l.view) ? "var(--color-accent)" : "var(--color-text)",
+      }}
+    >
+      {l.label}
+    </a>
+  );
 
   return (
     <>
@@ -55,7 +80,7 @@ export function Nav({
       >
         <div
           style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer" }}
-          onClick={() => onNavigate("landing")}
+          onClick={() => go("landing")}
         >
           <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true">
             <rect
@@ -80,23 +105,7 @@ export function Nav({
           </span>
         </div>
 
-        {LINKS.map((l) => (
-          <a
-            key={l.view}
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              onNavigate(l.view);
-            }}
-            style={{
-              fontSize: 14,
-              textDecoration: "none",
-              color: isActive(l.view) ? "var(--color-accent)" : "var(--color-text)",
-            }}
-          >
-            {l.label}
-          </a>
-        ))}
+        <nav className="nav-links">{LINKS.map(link)}</nav>
 
         <div
           style={{
@@ -109,7 +118,7 @@ export function Nav({
         >
           {wallet.account && (
             <div
-              className="muted"
+              className="muted nav-balance"
               style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
               title={`${TOKEN_SYMBOL} balance`}
             >
@@ -127,8 +136,18 @@ export function Nav({
           ) : (
             <ConnectControl wallet={wallet} />
           )}
+          <button
+            className="nav-burger"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            {menuOpen ? "✕" : "☰"}
+          </button>
         </div>
       </div>
+
+      {menuOpen && <nav className="nav-drawer">{LINKS.map(link)}</nav>}
 
       <div className="divider" />
 
@@ -270,7 +289,7 @@ function AccountMenu({
     try {
       const hash = await sendMint(account, 100n * 10n ** BigInt(TOKEN_DECIMALS));
       setNote("Minting…");
-      await waitForTx(hash);
+      await waitForTx(hash, `Test ${TOKEN_SYMBOL}`);
       await onBalanceChange();
       setNote(`Added 100 ${TOKEN_SYMBOL}.`);
     } catch (e) {

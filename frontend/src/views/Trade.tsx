@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import type { Address } from "viem";
+import { txLabel } from "../lib/toasts";
 import { ASSET_IMAGES, coverBackground } from "../lib/categories";
 import { EXCHANGE_ADDRESS, TOKEN_SYMBOL, addressUrl } from "../lib/config";
 import { formatRelative, formatToken, parseToken, shortAddress } from "../lib/format";
@@ -252,7 +253,7 @@ function OrderPanel({
     setBusy(label);
     setError(null);
     try {
-      await waitForTx(await fn(account));
+      await waitForTx(await fn(account), txLabel(label));
       await onDone();
     } catch (e) {
       setError(friendlyError(e));
@@ -427,7 +428,7 @@ function Orders({
     setBusy(label);
     setError(null);
     try {
-      await waitForTx(await fn(account));
+      await waitForTx(await fn(account), txLabel(label));
       await onDone();
     } catch (e) {
       setError(friendlyError(e));

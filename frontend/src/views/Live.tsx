@@ -5,7 +5,17 @@ import {
   blockUrl,
   txUrl,
 } from "../lib/config";
-import { formatMarketValue, formatTimestamp, formatToken, outcomeLabel, shortAddress } from "../lib/format";
+import {
+  formatMarketValue,
+  formatRelative,
+  formatTimestamp,
+  formatToken,
+  outcomeLabel,
+  shortAddress,
+} from "../lib/format";
+import { isUnstakedAndResolved } from "../lib/pricing";
+import { useNow } from "../hooks/useNow";
+import { useState } from "react";
 import { history, inFlight, type Attempt, type PipelineState } from "../lib/pipeline";
 import { SummaryCard } from "../components/SummaryCard";
 import { Outcome, type LpEvent, type Market } from "../lib/types";
@@ -33,7 +43,16 @@ export function Live({
 }) {
   const feed = useSettlementFeed(markets, lpEvents);
   const waiting = inFlight(feed);
-  const done = history(feed);
+  const now = useNow(30_000);
+  // The same rule the Markets board uses: a market nobody staked on is a
+  // rehearsal. Its settlement is real, but a table of near-identical test runs
+  // buries the ones that paid anyone. Counted, and one click away.
+  const [showRehearsals, setShowRehearsals] = useState(false);
+  const allDone = history(feed);
+  const rehearsals = allDone.filter((a) => a.market !== null && isUnstakedAndResolved(a.market)).length;
+  const done = showRehearsals
+    ? allDone
+    : allDone.filter((a) => a.market === null || !isUnstakedAndResolved(a.market));
   const rejected = feed.attempts.filter((a) => a.state === "rejected").length;
   /**
    * Counted explicitly rather than as `done.length`.
@@ -119,9 +138,24 @@ export function Live({
         <section style={{ marginBottom: "var(--space-8)" }}>
           <div className="eyebrow" style={{ marginBottom: "var(--space-3)" }}>
             Settled to date
+            {rehearsals > 0 && (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  className="linklike"
+                  style={{ textTransform: "none", letterSpacing: 0 }}
+                  onClick={() => setShowRehearsals((v) => !v)}
+                >
+                  {showRehearsals
+                    ? `hide ${rehearsals} test run${rehearsals === 1 ? "" : "s"}`
+                    : `${rehearsals} test run${rehearsals === 1 ? "" : "s"} hidden`}
+                </button>
+              </>
+            )}
           </div>
           <div className="table-scroll">
-            <table className="data" style={{ maxWidth: 1200 }}>
+            <table className="data stack-on-mobile" style={{ maxWidth: 1200 }}>
               <thead>
                 <tr>
                   <th>Market</th>
@@ -135,7 +169,7 @@ export function Live({
               </thead>
               <tbody>
                 {done.map((a) => (
-                  <HistoryRow key={a.id} attempt={a} />
+                  <HistoryRow key={a.id} attempt={a} times={feed.blockTimes} now={now} />
                 ))}
               </tbody>
             </table>
@@ -427,13 +461,21 @@ function BlockLine({ block, tx }: { block: bigint; tx: string }) {
   );
 }
 
-function HistoryRow({ attempt }: { attempt: Attempt }) {
+function HistoryRow({
+  attempt,
+  times,
+  now,
+}: {
+  attempt: Attempt;
+  times: ReadonlyMap<bigint, number>;
+  now: number;
+}) {
   const cat = attempt.market ? category(attempt.market.categoryId) : null;
   const refused = attempt.state === "rejected";
 
   return (
     <tr style={refused ? { boxShadow: "inset 2px 0 0 var(--color-negative)" } : undefined}>
-      <td>
+      <td data-label="Market">
         {cat && (
           <span className="tag" style={{ ...cat.tagStyle, marginRight: 8 }}>
             {cat.name}
@@ -441,16 +483,29 @@ function HistoryRow({ attempt }: { attempt: Attempt }) {
         )}
         {attempt.market?.question ?? attempt.marketKey}
       </td>
-      <td>
+      <td data-label="Requested">
         {attempt.requested ? (
-          <a href={blockUrl(attempt.requested.blockNumber)} target="_blank" rel="noreferrer">
-            {attempt.requested.blockNumber.toString()}
+          // When, in words; the block it happened in is a hover and a click
+          // away. A column of eight-digit block numbers told nobody anything.
+          <a
+            href={blockUrl(attempt.requested.blockNumber)}
+            target="_blank"
+            rel="noreferrer"
+            title={`block ${attempt.requested.blockNumber}${
+              times.has(attempt.requested.blockNumber)
+                ? ` · ${formatTimestamp(times.get(attempt.requested.blockNumber)!)}`
+                : ""
+            }`}
+          >
+            {times.has(attempt.requested.blockNumber)
+              ? formatRelative(times.get(attempt.requested.blockNumber)!, now)
+              : `block ${attempt.requested.blockNumber}`}
           </a>
         ) : (
           <span className="muted">before this scan</span>
         )}
       </td>
-      <td>
+      <td data-label="Report">
         {attempt.report ? (
           <span style={{ color: attempt.report.accepted ? undefined : "var(--color-negative)" }}>
             {attempt.report.accepted ? "accepted" : "refused"}
@@ -472,14 +527,14 @@ function HistoryRow({ attempt }: { attempt: Attempt }) {
           </span>
         )}
       </td>
-      <td>{attempt.settled ? outcomeLabel(attempt.settled.outcome as Outcome) : "—"}</td>
-      <td>
+      <td data-label="Outcome">{attempt.settled ? outcomeLabel(attempt.settled.outcome as Outcome) : "—"}</td>
+      <td data-label="Observed">
         {attempt.settled && attempt.market && attempt.settled.outcome !== Outcome.Void
           ? formatMarketValue(attempt.market.categoryId, attempt.settled.observedValue)
           : "—"}
       </td>
-      <td>{gapLabel(attempt)}</td>
-      <td>{attempt.payouts.length > 0 ? String(attempt.payouts.length) : "—"}</td>
+      <td data-label="Gap">{gapLabel(attempt)}</td>
+      <td data-label="Payouts">{attempt.payouts.length > 0 ? String(attempt.payouts.length) : "—"}</td>
     </tr>
   );
 }

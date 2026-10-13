@@ -29,6 +29,7 @@ import { MarketCard } from "../components/MarketCard";
 import { TradePanel } from "../components/TradePanel";
 import { LiquidityPanel } from "../components/LiquidityPanel";
 import { Stat } from "../components/Stat";
+import { Term } from "../components/Term";
 import type { WalletState } from "../hooks/useWallet";
 
 type Tab = "overview" | "activity" | "rules";
@@ -226,7 +227,7 @@ export function Detail({
                   observed {formatMarketValue(market.categoryId, settlement.observedValue)} against{" "}
                   {market.categoryId === "flights"
                     ? `a ${market.thresholdMinutes} min threshold`
-                    : `a strike of ${formatMarketValue(market.categoryId, market.strikePrice)}`}{" "}
+                    : <>a <Term k="strike">strike</Term> of {formatMarketValue(market.categoryId, market.strikePrice)}</>}{" "}
                   ·{" "}
                 </>
               )}
@@ -240,8 +241,13 @@ export function Detail({
             </>
           ) : (
             <>
-              {yes === null ? "first stake sets the price" : "implied chance of Yes"} ·{" "}
-              {formatToken(totalPool(market))} staked
+              {yes === null ? "first stake sets the price" : <Term k="implied">implied chance of Yes</Term>} ·{" "}
+              {formatToken(totalPool(market))} staked ·{" "}
+              {market.categoryId === "amm" ? (
+                <Term k="amm">priced by an AMM</Term>
+              ) : (
+                <Term k="pool">pooled</Term>
+              )}
               {market.status !== MarketStatus.Open && ` · ${statusLabel(market.status)}`}
             </>
           )}
@@ -293,7 +299,9 @@ export function Detail({
               className="card"
               style={{ marginTop: "var(--space-4)", boxShadow: "var(--shadow-md)" }}
             >
-              <div className="eyebrow">Settled by Chainlink CRE</div>
+              <div className="eyebrow">
+                <Term k="settlement">Settled by Chainlink CRE</Term>
+              </div>
               {/*
                 * The same sentence the live pipeline uses, from the same
                 * constant — this card said "Settled by Chainlink CRE" alone on

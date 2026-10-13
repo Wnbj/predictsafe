@@ -25,6 +25,8 @@ export interface SettlementFeed extends Pipelines {
   lastPollAt: number | null;
   failures: { family: LogFamily; message: string }[];
   loading: boolean;
+  /** Unix seconds per block, for the blocks the page renders. */
+  blockTimes: ReadonlyMap<bigint, number>;
 }
 
 export function useSettlementFeed(markets: Market[], lpEvents: LpEvent[]): SettlementFeed {
@@ -95,5 +97,5 @@ export function useSettlementFeed(markets: Market[], lpEvents: LpEvent[]): Settl
 
   const pipelines = buildPipelines(markets, logs, lpEvents, new Map(times));
 
-  return { ...pipelines, head, lastPollAt, failures, loading };
+  return { ...pipelines, head, lastPollAt, failures, loading, blockTimes: times };
 }

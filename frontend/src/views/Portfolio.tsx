@@ -99,7 +99,7 @@ export function Portfolio({
         market.categoryId === "amm"
           ? await sendAmmRedeem(wallet.account as Address, market)
           : await sendClaim(wallet.account as Address, market);
-      await waitForTx(hash);
+      await waitForTx(hash, market.categoryId === "amm" ? "Redeem" : "Claim");
       await onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -115,7 +115,7 @@ export function Portfolio({
     setError(null);
     try {
       const hash = await sendAmmWithdrawLiquidity(wallet.account as Address, market);
-      await waitForTx(hash);
+      await waitForTx(hash, "Liquidity withdrawal");
       await onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

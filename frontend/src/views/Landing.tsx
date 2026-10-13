@@ -7,6 +7,7 @@ import { groupIntoEvents, isLadder } from "../lib/events";
 import { MarketStatus, type CategoryId, type Market, type TradeEvent } from "../lib/types";
 import { MarketCard } from "../components/MarketCard";
 import { Reveal } from "../components/Reveal";
+import { Term } from "../components/Term";
 import type { View } from "../lib/view";
 
 export function Landing({
@@ -45,14 +46,21 @@ export function Landing({
     ];
   }, [markets, tradeEvents]);
 
-  // The hero ring shows the real mean implied probability across live markets.
-  const avgOdds = useMemo(() => {
-    const withOdds = markets
-      .map(impliedYesPercent)
-      .filter((p): p is number => p !== null);
-    if (withOdds.length === 0) return 0;
-    return Math.round(withOdds.reduce((a, b) => a + b, 0) / withOdds.length);
+  /**
+   * The hero ring is ONE market: the open one closing soonest, and its chance
+   * of Yes. It used to show the mean implied probability across every market
+   * ever made — settled ones included — a number that described nothing anyone
+   * could act on. Absent when nothing is open, rather than a "0%".
+   */
+  const spotlight = useMemo(() => {
+    const nowS = Date.now() / 1000;
+    return (
+      markets
+        .filter((m) => m.status === MarketStatus.Open && m.closeTime > nowS)
+        .sort((a, b) => a.closeTime - b.closeTime)[0] ?? null
+    );
   }, [markets]);
+  const avgOdds = spotlight ? Math.round(impliedYesPercent(spotlight) ?? 50) : 0;
 
   /**
    * Grouped before ranking, so a five-rung ladder competes for a slot as one
@@ -163,7 +171,18 @@ export function Landing({
         <div ref={d2} style={diamond(220, "68%", 10, "var(--color-accent-2-400)", 0.4)} />
         <div ref={d3} style={diamond(140, "76%", 8, "var(--color-accent)", 0.3)} />
 
-        <div className="hero-ring" style={{ position: "absolute", top: 90, right: 64, width: 140, height: 140 }}>
+        {spotlight && (
+        <div
+          className="hero-ring"
+          role="button"
+          tabIndex={0}
+          title={spotlight.question}
+          onClick={() => onOpenMarket(spotlight.key)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") onOpenMarket(spotlight.key);
+          }}
+          style={{ position: "absolute", top: 90, right: 64, width: 140, height: 140, cursor: "pointer" }}
+        >
           <svg
             viewBox="0 0 120 120"
             width="140"
@@ -202,10 +221,27 @@ export function Landing({
               className="muted"
               style={{ fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase" }}
             >
-              avg. odds
+              chance of yes
             </div>
           </div>
+          <div
+            className="muted"
+            style={{
+              position: "absolute",
+              top: 148,
+              left: -30,
+              right: -30,
+              textAlign: "center",
+              fontSize: 11,
+              lineHeight: 1.35,
+            }}
+          >
+            Closing next:
+            <br />
+            {spotlight.question.length > 60 ? `${spotlight.question.slice(0, 58)}…` : spotlight.question}
+          </div>
         </div>
+        )}
 
         <div style={{ position: "relative", maxWidth: 680 }}>
           <div
@@ -232,9 +268,10 @@ export function Landing({
             Trade on what happens next.
           </h1>
           <p style={{ fontSize: 16, opacity: 0.8, maxWidth: 520, margin: "0 0 var(--space-6)" }}>
-            Markets settled by a Chainlink CRE workflow — an oracle network reads the real-world
-            result and writes it on chain. Every percentage is a live probability: pooled odds on
-            most markets, a quoted price on the AMM ones.
+            Markets <Term k="settlement">settled by a Chainlink CRE workflow</Term> — an oracle
+            network reads the real-world result and writes it on chain. Every percentage is a live
+            probability: <Term k="pool">pooled odds</Term> on most markets, a quoted price on the{" "}
+            <Term k="amm">AMM</Term> ones.
           </p>
           <div style={{ display: "flex", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <button className="btn btn-accent" onClick={() => onNavigate("markets")}>
@@ -316,9 +353,8 @@ export function Landing({
                   >
                     <CoverIcon cat={c} />
                   </div>
-                  <span className="tag" style={c.tagStyle}>
-                    {c.name}
-                  </span>
+                  {/* The name once. A tag reading "Flights" above a heading
+                      reading "Flights" said it twice on every tile. */}
                   <div className="heading" style={{ fontSize: 17 }}>
                     {c.name}
                   </div>

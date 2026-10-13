@@ -9,6 +9,7 @@ import { Markets } from "./views/Markets";
 import { Detail } from "./views/Detail";
 import { Portfolio } from "./views/Portfolio";
 import { MarketsSkeleton } from "./components/MarketsSkeleton";
+import { Toaster } from "./components/Toaster";
 import { Leaderboard } from "./views/Leaderboard";
 import { Live } from "./views/Live";
 import { Trade } from "./views/Trade";
@@ -248,6 +249,7 @@ export default function App() {
           )}
         </>
       )}
+      <Toaster />
     </SpotProvider>
   );
 }

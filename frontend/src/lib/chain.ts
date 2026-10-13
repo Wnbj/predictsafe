@@ -8,6 +8,7 @@ import {
   type Address,
 } from "viem";
 import { getActiveProvider } from "./providers";
+import { showToast } from "./toasts";
 import { readSettlementLogs } from "./settlementEvents";
 import { categoryOf, syncLogs } from "./logScan";
 import {
@@ -19,6 +20,7 @@ import {
   RPC_URL,
   STOCK_MARKET_ADDRESS,
   TOKEN_ADDRESS,
+  txUrl,
 } from "./config";
 import {
   ammMarketAbi,
@@ -1312,8 +1314,32 @@ export async function watchToken(token: { address: string; symbol: string; decim
   }
 }
 
-export function waitForTx(hash: `0x${string}`) {
-  return publicClient.waitForTransactionReceipt({ hash });
+/**
+ * Waits for a transaction, and tells the user what is happening to it.
+ *
+ * Every write path in the app calls this straight after sending, so it is the
+ * one place that can announce "sent", "confirmed" or "failed" for all of them.
+ *
+ * It also THROWS on a reverted transaction. `waitForTransactionReceipt`
+ * resolves either way, so a stake the contract refused used to be treated as
+ * done: the panel refreshed, showed nothing new, and said nothing at all.
+ */
+export async function waitForTx(hash: `0x${string}`, label = "Transaction") {
+  const href = txUrl(hash);
+  showToast({ id: hash, state: "pending", title: `${label} sent`, detail: "Waiting for Sepolia to confirm…", href });
+  let receipt;
+  try {
+    receipt = await publicClient.waitForTransactionReceipt({ hash });
+  } catch (e) {
+    showToast({ id: hash, state: "error", title: `${label}: no confirmation`, detail: "Check it on Etherscan.", href });
+    throw e;
+  }
+  if (receipt.status === "reverted") {
+    showToast({ id: hash, state: "error", title: `${label} failed`, detail: "The contract rejected it.", href });
+    throw new Error(`${label} reverted on chain`);
+  }
+  showToast({ id: hash, state: "success", title: `${label} confirmed`, href });
+  return receipt;
 }
 
 /** CryptoMarket.Asset, in the contract's order. */
@@ -1347,7 +1373,7 @@ export async function sendCreateCryptoMarket(
 
 /** The id `MarketCreated` reports in a receipt from `sendCreateCryptoMarket`. */
 export async function createdCryptoMarketId(hash: `0x${string}`): Promise<number | null> {
-  const receipt = await waitForTx(hash);
+  const receipt = await waitForTx(hash, "Market creation");
   const [created] = parseEventLogs({
     abi: cryptoMarketAbi,
     eventName: "MarketCreated",
