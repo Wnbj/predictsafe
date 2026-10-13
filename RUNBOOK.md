@@ -85,10 +85,16 @@ signing goes through the visitor's wallet and never touches it. Locally,
 same single key serves both, so it must **not** get an origin allowlist: local
 tools — `bun run snapshot`, `cast` — send no browser origin.
 
-`vercel.json` also rewrites every path except `/api/` to `index.html`, so a
-reload on `/trade` or `/markets/crypto/13` does not 404 (Vercel serves real
-files first), and caches hashed assets for a year, photos for a week and the
-log snapshot not at all.
+`vercel.json` also rewrites every path except `/api/`, `/assets/` and `/img/`
+to `index.html`, so a reload on `/trade` or `/markets/crypto/13` does not 404.
+**Do not widen that rewrite, and do not add long-lived cache headers to
+`/assets/`.** On 2026-10-13 both were in place: during a deploy a browser got
+the new `index.html` before the edge had the new script, the rewrite answered
+the missing script with `index.html`, and a one-year `immutable` header pinned
+that HTML in the browser cache under the script's name — a blank page that a
+reload did not fix. Assets now use Vercel's default (revalidate by ETag), a
+missing one is an honest 404, and `vite.config.ts` puts the commit in every
+file name so a bad entry cannot outlive the deploy it came from.
 
 **The free tier is shared by every visitor**, and by your own local work. The
 app is sized for one person on it; several at once will see 429s and slow

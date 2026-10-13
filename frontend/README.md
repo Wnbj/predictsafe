@@ -74,8 +74,9 @@ The app is sized to fit a free tier, and most of `src/lib` exists for that:
 
 ## Hosting
 
-Deployed on Vercel from this folder; `vercel.json` holds the build, the
-rewrite that keeps deep links working, and cache headers. A hosted build reads
+Deployed on Vercel from this folder; `vercel.json` holds the build and the
+rewrite that keeps deep links working — deliberately narrow, see RUNBOOK for
+the blank page a wider one caused. A hosted build reads
 the chain through `api/rpc.ts`, a read-only proxy that keeps the provider key
 server-side in `RPC_UPSTREAM_URL`; locally, `VITE_RPC_URL` in `.env.local` goes
 to the node directly. Setup is in RUNBOOK under "Hosting the frontend".
