@@ -358,7 +358,11 @@ input:focus {
   .detail-grid {
     grid-template-columns: 1fr;
   }
-  .trade-panel,
+  /* Two rules, not one: sharing a selector here zeroed the PANEL's padding
+     too, and below 1100px every card's contents ran into its border. */
+  .trade-panel {
+    position: static;
+  }
   .trade-column {
     position: static;
     max-height: none;
