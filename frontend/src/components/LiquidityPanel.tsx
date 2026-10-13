@@ -5,11 +5,11 @@ import { TOKEN_SYMBOL, txUrl } from "../lib/config";
 import { formatToken, formatSigned, parseToken } from "../lib/format";
 import {
   quoteAmmAddLiquidity,
-  sendAmmAddLiquidity,
   sendAmmWithdrawLiquidity,
-  sendApprove,
   waitForTx,
+  ammAddLiquidityCall,
 } from "../lib/chain";
+import { writeWithApproval } from "../lib/approval";
 import { lpPnl, markShares } from "../lib/lp";
 import { MarketStatus, type Market, type Position } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
@@ -102,24 +102,32 @@ export function LiquidityPanel({
 
   const doAdd = async () => {
     if (!account || !amount) return;
-    if (allowance < amount) {
-      setBusy("approving");
-      setError(null);
-      try {
-        const h = await sendApprove(account, market.contract, amount);
-        setLastTx(h);
-        await waitForTx(h, "Approval");
-      } catch (e) {
-        setError(friendlyError(e));
-        setBusy(null);
-        return;
-      }
-    }
     // Re-quoted immediately before submitting, then bounded 1% below, exactly
     // as a trade is: the pool can move between render and signature.
     const fresh = await quoteAmmAddLiquidity(market, amount);
     const minOut = (fresh.lpShares * 99n) / 100n;
-    await run("adding", (a) => sendAmmAddLiquidity(a, market, amount, minOut));
+    setBusy("adding");
+    setError(null);
+    setLastTx(null);
+    try {
+      // Approval and deposit in one confirmation where the wallet can batch
+      // them — see lib/approval.
+      const hash = await writeWithApproval({
+        account,
+        spender: market.contract,
+        amount,
+        allowance,
+        call: ammAddLiquidityCall(market, amount, minOut),
+        label: "Liquidity deposit",
+        onApproving: () => setBusy("approving"),
+      });
+      setLastTx(hash);
+      await onDone();
+    } catch (e) {
+      setError(friendlyError(e));
+    } finally {
+      setBusy(null);
+    }
   };
 
   const sharePct =

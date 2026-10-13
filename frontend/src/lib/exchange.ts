@@ -1,6 +1,6 @@
 import { formatUnits, parseAbi, type Address } from "viem";
 import { chain, EXCHANGE_ADDRESS } from "./config";
-import { priorityClient, walletClientFor } from "./chain";
+import { priorityClient, walletClientFor, type ContractCall } from "./chain";
 
 /**
  * The synthetic-asset exchange: buy and sell tokens of gold and an S&P 500
@@ -377,6 +377,14 @@ export async function readExchange(account: Address | null): Promise<ExchangeSta
 }
 
 // --- writes ----------------------------------------------------------------------
+
+/** `placeBuy` as data, for a batch with its approval (lib/approval). */
+export const placeBuyCall = (assetId: number, usdcIn: bigint): ContractCall => ({
+  address: EXCHANGE_ADDRESS,
+  abi: exchangeAbi as unknown as readonly unknown[],
+  functionName: "placeBuy",
+  args: [assetId, usdcIn],
+});
 
 export function sendPlaceBuy(account: Address, assetId: number, usdcIn: bigint) {
   return walletClientFor(account).writeContract({

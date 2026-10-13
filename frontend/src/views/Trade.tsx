@@ -4,7 +4,8 @@ import { txLabel } from "../lib/toasts";
 import { ASSET_IMAGES, coverBackground } from "../lib/categories";
 import { EXCHANGE_ADDRESS, TOKEN_SYMBOL, addressUrl } from "../lib/config";
 import { formatRelative, formatToken, parseToken, shortAddress } from "../lib/format";
-import { sendApprove, sendMint, waitForTx } from "../lib/chain";
+import { sendMint, waitForTx } from "../lib/chain";
+import { writeWithApproval } from "../lib/approval";
 import {
   ASSET_TOKEN_DECIMALS,
   canCancel,
@@ -16,7 +17,7 @@ import {
   orderLabel,
   sendCancel,
   sendFill,
-  sendPlaceBuy,
+  placeBuyCall,
   sendPlaceSell,
   valueOf,
   type ExchangeAsset,
@@ -262,6 +263,28 @@ function OrderPanel({
     }
   };
 
+  const placeBuy = async () => {
+    if (!account || !amount) return;
+    setBusy("placing");
+    setError(null);
+    try {
+      await writeWithApproval({
+        account,
+        spender: EXCHANGE_ADDRESS,
+        amount,
+        allowance: usdc.allowance,
+        call: placeBuyCall(asset.id, amount),
+        label: "Order",
+        onApproving: () => setBusy("approving"),
+      });
+      await onDone();
+    } catch (e) {
+      setError(friendlyError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (!account) {
     return (
       <aside className="trade-panel">
@@ -357,35 +380,32 @@ function OrderPanel({
         Unfilled orders can be taken back after 7 days.
       </p>
 
-      {needsApproval ? (
-        <button
-          className="btn btn-accent"
-          disabled={busy !== null || insufficient}
-          onClick={() => void run("approving", (a) => sendApprove(a, EXCHANGE_ADDRESS, amount!))}
-        >
-          {busy === "approving" ? "Approving…" : `Approve ${TOKEN_SYMBOL}`}
-        </button>
-      ) : (
-        <button
-          className="btn btn-accent"
-          disabled={busy !== null || !amount || amount === 0n || insufficient || !asset.active}
-          onClick={() =>
-            void run("placing", (a) =>
-              side === "buy" ? sendPlaceBuy(a, asset.id, amount!) : sendPlaceSell(a, asset.id, amount!),
-            )
-          }
-        >
-          {busy === "placing"
+      {/* One button. A buy that needs an approval sends both — in one
+          confirmation where the wallet can batch them (lib/approval). This
+          used to be a separate "Approve mUSDC" step before every first order. */}
+      <button
+        className="btn btn-accent"
+        disabled={busy !== null || !amount || amount === 0n || insufficient || !asset.active}
+        onClick={() =>
+          side === "buy"
+            ? void placeBuy()
+            : void run("placing", (a) => sendPlaceSell(a, asset.id, amount!))
+        }
+      >
+        {busy === "approving"
+          ? "Approving…"
+          : busy === "placing"
             ? "Placing…"
             : insufficient
               ? side === "buy"
                 ? `Not enough ${TOKEN_SYMBOL}`
                 : `Not enough s${asset.symbol}`
               : side === "buy"
-                ? `Place buy order`
-                : `Place sell order`}
-        </button>
-      )}
+                ? needsApproval
+                  ? "Approve & place buy order"
+                  : "Place buy order"
+                : "Place sell order"}
+      </button>
 
       {error && <div style={{ fontSize: 12, color: "var(--color-negative)" }}>{error}</div>}
     </aside>

@@ -906,16 +906,6 @@ export async function readSettledEvents(): Promise<SettledEvent[]> {
 
 // ---- writes ---------------------------------------------------------------
 
-export async function sendApprove(account: Address, spender: Address, amount: bigint) {
-  const wallet = walletClientFor(account);
-  return wallet.writeContract({
-    ...tokenContract,
-    functionName: "approve",
-    args: [spender, amount],
-    chain,
-    account,
-  });
-}
 
 export async function sendMint(account: Address, amount: bigint) {
   const wallet = walletClientFor(account);
@@ -1381,3 +1371,53 @@ export async function createdCryptoMarketId(hash: `0x${string}`): Promise<number
   });
   return created ? Number(created.args.marketId) : null;
 }
+
+// ---- calls as data ---------------------------------------------------------
+//
+// The writes that spend mUSDC, described rather than sent, so one of them can
+// travel in a batch together with the approval it needs (lib/approval).
+
+/** A contract write described as data — what writeContract and a batch both take. */
+export interface ContractCall {
+  address: Address;
+  abi: readonly unknown[];
+  functionName: string;
+  args: readonly unknown[];
+}
+
+export const stakeCall = (market: Market, isYes: boolean, amount: bigint): ContractCall => ({
+  address: contractFor(market).address,
+  abi: marketWriteAbi,
+  functionName: "stake",
+  args: [BigInt(market.id), isYes, amount],
+});
+
+export const ammBuyCall = (
+  market: Market,
+  isYes: boolean,
+  collateralIn: bigint,
+  minSharesOut: bigint,
+): ContractCall => ({
+  address: market.contract,
+  abi: ammWriteAbi,
+  functionName: "buy",
+  args: [BigInt(market.id), isYes, collateralIn, minSharesOut],
+});
+
+export const ammAddLiquidityCall = (
+  market: Market,
+  amount: bigint,
+  minLpSharesOut: bigint,
+): ContractCall => ({
+  address: market.contract,
+  abi: ammWriteAbi,
+  functionName: "addLiquidity",
+  args: [BigInt(market.id), amount, minLpSharesOut],
+});
+
+export const approveCall = (spender: Address, amount: bigint): ContractCall => ({
+  address: TOKEN_ADDRESS,
+  abi: mockUsdcAbi,
+  functionName: "approve",
+  args: [spender, amount],
+});

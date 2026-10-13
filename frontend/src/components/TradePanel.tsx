@@ -13,16 +13,17 @@ import {
 import {
   quoteAmmSell,
   quoteAmmShares,
-  sendAmmBuy,
   sendAmmSell,
   sendAmmRedeem,
-  sendApprove,
   sendClaim,
   sendMint,
   sendRequestSettlement,
-  sendStake,
   waitForTx,
+  ammBuyCall,
+  stakeCall,
+  type ContractCall,
 } from "../lib/chain";
+import { canBatch, headroomLabel, writeWithApproval } from "../lib/approval";
 import type { Market, Position, Side } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
@@ -58,6 +59,17 @@ export function TradePanel({
 
   const estimate = amount ? estimatePayout(market, side, amount) : null;
   const needsApproval = amount !== null && allowance < amount;
+  // Asked once per wallet and cached, so the hint under the button can say
+  // truthfully whether this will be one confirmation or two.
+  const [batchable, setBatchable] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!account) return;
+    let live = true;
+    void canBatch(account).then((ok) => live && setBatchable(ok));
+    return () => {
+      live = false;
+    };
+  }, [account]);
   const insufficient = amount !== null && amount > balance;
 
   const run = async (label: Busy, fn: (acct: Address) => Promise<`0x${string}`>) => {
@@ -131,27 +143,43 @@ export function TradePanel({
     };
   }, [isAmm, market, side, amount, mode]);
 
+  /**
+   * A write that spends mUSDC: approval and call in one confirmation where the
+   * wallet can batch them, otherwise an approval with headroom first — see
+   * lib/approval. Used to be approve-exactly-then-call, two prompts every time.
+   */
+  const runApproved = async (call: ContractCall) => {
+    if (!account || !amount) return;
+    setBusy("staking");
+    setError(null);
+    setLastTx(null);
+    try {
+      const hash = await writeWithApproval({
+        account,
+        spender: market.contract,
+        amount,
+        allowance,
+        call,
+        label: "Trade",
+        onApproving: () => setBusy("approving"),
+      });
+      setLastTx(hash);
+      await onDone();
+    } catch (e) {
+      setError(friendlyError(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const doBuy = async () => {
     if (!account || !amount) return;
-    if (allowance < amount) {
-      setBusy("approving");
-      setError(null);
-      try {
-        const h = await sendApprove(account, market.contract, amount);
-        setLastTx(h);
-        await waitForTx(h, "Approval");
-      } catch (e) {
-        setError(friendlyError(e));
-        setBusy(null);
-        return;
-      }
-    }
     // Re-quote immediately before submitting and allow 1% below it. Quoting at
     // render time and submitting minutes later would either revert constantly
     // or, with no bound at all, fill at whatever the curve had moved to.
     const fresh = await quoteAmmShares(market, side === "yes", amount);
     const minOut = (fresh.shares * 99n) / 100n;
-    await run("staking", (a) => sendAmmBuy(a, market, side === "yes", amount, minOut));
+    await runApproved(ammBuyCall(market, side === "yes", amount, minOut));
   };
 
   const doSell = async () => {
@@ -167,20 +195,7 @@ export function TradePanel({
 
   const doStake = async () => {
     if (!account || !amount) return;
-    if (allowance < amount) {
-      setBusy("approving");
-      setError(null);
-      try {
-        const h = await sendApprove(account, market.contract, amount);
-        setLastTx(h);
-        await waitForTx(h, "Approval");
-      } catch (e) {
-        setError(friendlyError(e));
-        setBusy(null);
-        return;
-      }
-    }
-    await run("staking", (a) => sendStake(a, market, side === "yes", amount));
+    await runApproved(stakeCall(market, side === "yes", amount));
   };
 
   if (!account) {
@@ -420,6 +435,13 @@ export function TradePanel({
                       ? "Buy shares"
                       : "Place stake"}
           </button>
+          {needsApproval && mode === "buy" && batchable !== null && (
+            <div className="muted" style={{ fontSize: 11, marginTop: -4 }}>
+              {batchable
+                ? "Approval and stake go together — one confirmation in your wallet."
+                : `Two confirmations this time: an approval of ${headroomLabel}, then the stake. Your next stakes here up to that amount need only one.`}
+            </div>
+          )}
         </>
       ) : (
         <div className="muted" style={{ fontSize: 13 }}>
