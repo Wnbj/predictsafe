@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { addressUrl, TOKEN_SYMBOL } from "../lib/config";
+import {
+  addressUrl,
+  EXCHANGE_TOKENS,
+  SEPOLIA_FAUCET_URL,
+  TOKEN_ADDRESS,
+  TOKEN_DECIMALS,
+  TOKEN_SYMBOL,
+} from "../lib/config";
+import { sendMint, waitForTx, watchToken } from "../lib/chain";
+import type { Address } from "viem";
 import { formatToken, initials, shortAddress } from "../lib/format";
 import type { WalletState } from "../hooks/useWallet";
 import type { View } from "../lib/view";
@@ -17,11 +26,14 @@ export function Nav({
   onNavigate,
   wallet,
   balance,
+  onBalanceChange,
 }: {
   view: View;
   onNavigate: (v: View) => void;
   wallet: WalletState;
   balance: bigint;
+  /** After a faucet mint, so the balance beside the menu catches up. */
+  onBalanceChange: () => Promise<void>;
 }) {
   const isActive = (v: View) =>
     v === "markets" ? view === "markets" || view === "detail" : view === v;
@@ -107,7 +119,11 @@ export function Nav({
           )}
 
           {wallet.account ? (
-            <AccountMenu account={wallet.account} onDisconnect={wallet.disconnect} />
+            <AccountMenu
+              account={wallet.account}
+              onDisconnect={wallet.disconnect}
+              onBalanceChange={onBalanceChange}
+            />
           ) : (
             <ConnectControl wallet={wallet} />
           )}
@@ -234,11 +250,50 @@ function ConnectControl({ wallet }: { wallet: WalletState }) {
 function AccountMenu({
   account,
   onDisconnect,
+  onBalanceChange,
 }: {
-  account: string;
+  account: Address;
   onDisconnect: () => Promise<void>;
+  onBalanceChange: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  /** What the last faucet or add-token action did, shown in the menu. */
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // The two things a newcomer gets stuck on before their first trade: no
+  // test money, and tokens their wallet does not list. Both used to live only
+  // inside individual panels, or nowhere.
+  const mint = async () => {
+    setBusy(true);
+    setNote("Confirm in wallet…");
+    try {
+      const hash = await sendMint(account, 100n * 10n ** BigInt(TOKEN_DECIMALS));
+      setNote("Minting…");
+      await waitForTx(hash);
+      await onBalanceChange();
+      setNote(`Added 100 ${TOKEN_SYMBOL}.`);
+    } catch (e) {
+      setNote(/User rejected|denied/i.test(String(e)) ? "Cancelled." : "Mint failed — is the wallet on Sepolia?");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addTokens = async () => {
+    setBusy(true);
+    const tokens = [
+      { address: TOKEN_ADDRESS, symbol: TOKEN_SYMBOL, decimals: TOKEN_DECIMALS },
+      ...EXCHANGE_TOKENS,
+    ];
+    const added: string[] = [];
+    for (const t of tokens) {
+      setNote(`Approve ${t.symbol} in your wallet…`);
+      if (await watchToken(t)) added.push(t.symbol);
+    }
+    setNote(added.length ? `Added ${added.join(", ")}.` : "Your wallet did not add any.");
+    setBusy(false);
+  };
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -330,6 +385,39 @@ function AccountMenu({
           >
             View on Etherscan ↗
           </a>
+          <div style={{ height: 1, background: "var(--color-divider)", margin: "4px 0" }} />
+          <button
+            role="menuitem"
+            disabled={busy}
+            onClick={() => void mint()}
+            style={{ ...menuItemStyle, border: "none", width: "100%", textAlign: "left" }}
+          >
+            Get 100 test {TOKEN_SYMBOL}
+          </button>
+          <button
+            role="menuitem"
+            disabled={busy}
+            onClick={() => void addTokens()}
+            style={{ ...menuItemStyle, border: "none", width: "100%", textAlign: "left" }}
+            title={`${TOKEN_SYMBOL}, ${EXCHANGE_TOKENS.map((t) => t.symbol).join(", ")}`}
+          >
+            Add tokens to wallet
+          </button>
+          <a
+            href={SEPOLIA_FAUCET_URL}
+            target="_blank"
+            rel="noreferrer"
+            role="menuitem"
+            style={menuItemStyle}
+          >
+            Sepolia ETH for gas ↗
+          </a>
+          {note && (
+            <div className="muted" style={{ fontSize: 12, padding: "4px 8px" }} role="status">
+              {note}
+            </div>
+          )}
+          <div style={{ height: 1, background: "var(--color-divider)", margin: "4px 0" }} />
           <button
             role="menuitem"
             onClick={() => {

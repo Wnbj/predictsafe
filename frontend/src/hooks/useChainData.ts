@@ -201,6 +201,9 @@ export function deriveTraders(
     /** LP shares held in this market, and what they cost. */
     lpShares: bigint;
     lpDeposited: bigint;
+    /** Pool claims already taken: the shares given up and what they paid. */
+    lpWithdrawnShares: bigint;
+    lpWithdrawnAmount: bigint;
   };
 
   const byUser = new Map<Address, { staked: bigint; perMarket: Map<string, Book> }>();
@@ -216,18 +219,29 @@ export function deriveTraders(
   const bookFor = (rec: { perMarket: Map<string, Book> }, key: string, isAmm: boolean) => {
     let book = rec.perMarket.get(key);
     if (!book) {
-      book = { yes: 0n, no: 0n, netIn: 0n, isAmm, lpShares: 0n, lpDeposited: 0n };
+      book = {
+        yes: 0n, no: 0n, netIn: 0n, isAmm,
+        lpShares: 0n, lpDeposited: 0n, lpWithdrawnShares: 0n, lpWithdrawnAmount: 0n,
+      };
       rec.perMarket.set(key, book);
     }
     return book;
   };
 
   for (const e of lpEvents) {
-    if (e.direction !== "add") continue;
     const rec = recFor(e.provider);
     const book = bookFor(rec, e.marketKey, true);
+    if (e.direction === "withdraw") {
+      book.lpWithdrawnShares += e.lpShares;
+      book.lpWithdrawnAmount += e.amount;
+      continue;
+    }
     book.lpShares += e.lpShares;
     book.lpDeposited += e.amount;
+    // The residual shares are part of what the deposit bought; their cost is
+    // already in lpDeposited, so they add to the position and not to netIn.
+    book.yes += e.yesResidual ?? 0n;
+    book.no += e.noResidual ?? 0n;
     rec.staked += e.amount;
   }
 
@@ -276,14 +290,23 @@ export function deriveTraders(
       // A provider's pool claim is the other half of what they are owed, and
       // its cost is what they deposited. Both sides have to be added, or
       // liquidity would score as pure profit or pure loss.
-      if (book.lpShares > 0n && m.categoryId === "amm" && m.totalLpShares > 0n) {
-        const winning =
-          m.status === MarketStatus.Void
-            ? (m.yesReserve + m.noReserve) / 2n
-            : m.outcome === Outcome.Yes
-              ? m.yesReserve
-              : m.noReserve;
-        payout += (winning * book.lpShares) / m.totalLpShares;
+      //
+      // A claim already taken is counted at what it actually paid. Valuing it
+      // from the pool as it stands now read a withdrawn pool's zero reserve as
+      // a total loss of the deposit — the deployer showed -119 mUSDC for
+      // ladders it had been paid out of in full.
+      if (book.lpShares > 0n && m.categoryId === "amm") {
+        payout += book.lpWithdrawnAmount;
+        const held = book.lpShares - book.lpWithdrawnShares;
+        if (held > 0n && m.totalLpShares > 0n) {
+          const winning =
+            m.status === MarketStatus.Void
+              ? (m.yesReserve + m.noReserve) / 2n
+              : m.outcome === Outcome.Yes
+                ? m.yesReserve
+                : m.noReserve;
+          payout += (winning * held) / m.totalLpShares;
+        }
         cost += book.lpDeposited;
       }
 

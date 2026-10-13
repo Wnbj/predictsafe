@@ -43,6 +43,14 @@ cre execution list predictsafe-settlement --status FAILURE   # expect none
 cd frontend && bun run build                         # ships public/ too
 ```
 
+**Then open something to trade.** Every market eventually resolves, and a
+board with nothing active has nothing to show. Markets → *+ Create market*
+opens a BTC or ETH price market from the app — `CryptoMarket.newMarket` is
+public and takes no collateral — and SettlementKeeper settles it afterwards
+with nobody watching. Stake both sides before it closes, or it voids and
+refunds. The account menu's *Get 100 test mUSDC* and *Add tokens to wallet*
+are the two things a first-time visitor needs before their first stake.
+
 **Why the snapshot matters most.** A first visit used to walk the whole chain
 from the deploy block — 28 chunks, two queries each — and on the free RPC that
 is exactly where the rate limit bites. Measured 2026-09-22: 142 HTTP 429s in

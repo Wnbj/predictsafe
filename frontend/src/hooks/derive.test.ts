@@ -636,4 +636,37 @@ describe("deriveTraders — liquidity providers", () => {
     const b = traders.find((t) => t.address === bob)!;
     expect(a.profit).toBe(b.profit);
   });
+
+  /**
+   * The deployer's ladder rung 1, as it stands on chain: 40 deposited, 22.86
+   * handed back as Yes shares at the seed, and the 17.14 pool claim already
+   * withdrawn — so the pool now reads zero. Valued from that empty pool, the
+   * whole deposit scored as lost; the board showed -119 mUSDC for ladders that
+   * had paid back exactly what went in.
+   */
+  it("counts residual shares, and a withdrawn claim at what it paid", () => {
+    const drained = { ...settled, yesReserve: 0n, noReserve: 0n, totalLpShares: 0n } as Market;
+    const traders = deriveTraders(
+      [drained],
+      [],
+      [
+        { ...provide(alice, 40_000_000n, 40_000_000n, 40_000_000n), marketKey: drained.key,
+          yesResidual: 22_860_000n, noResidual: 0n },
+        { marketKey: drained.key, provider: alice, direction: "withdraw", amount: 17_140_000n,
+          lpShares: 40_000_000n, totalLpShares: 0n, blockNumber: 2n, txHash: "0x01" },
+      ],
+    );
+
+    expect(traders[0]!.profit).toBe(0n);
+  });
+
+  /** Residual shares on the LOSING side pay nothing, and must not be scored. */
+  it("values residual shares by the outcome, not at face", () => {
+    const traders = deriveTraders(
+      [settled],
+      [],
+      [{ ...provide(alice, 40_000_000n, 40_000_000n, 40_000_000n), yesResidual: 0n, noResidual: 5_000_000n }],
+    );
+    expect(traders[0]!.profit).toBe(7_058_823n - 40_000_000n);
+  });
 });

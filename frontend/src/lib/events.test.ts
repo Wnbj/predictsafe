@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { groupIntoEvents, isLadder, ladderFor } from "./events";
+import { groupIntoEvents, isLadder, ladderFor, ladderTitle } from "./events";
+import { formatMarketValue } from "./format";
 import { MarketStatus, type Market } from "./types";
 import { amm0, crypto0, flight0, stock0 } from "./fixtures";
 import { marketKey } from "./chain";
@@ -151,5 +152,26 @@ describe("ladderFor", () => {
   it("keeps settled rungs in the ladder", () => {
     const settled = ladder.map((m) => ({ ...m, status: MarketStatus.Settled }) as Market);
     expect(ladderFor(settled[0]!, settled)?.rungs).toHaveLength(5);
+  });
+});
+
+describe("ladderTitle", () => {
+  it("asks where, not at or above an elided price", () => {
+    expect(ladderTitle("Will BTC be at or above $63000 at expiry?")).toBe("Where will BTC be at expiry?");
+    expect(ladderTitle("Will ETH be at or above $1,882.50 in 1 hour?")).toBe("Where will ETH be in 1 hour?");
+  });
+
+  it("leaves any other wording alone", () => {
+    expect(ladderTitle("Will BTC be at or above the low strike?")).toBe("Will BTC be at or above the low strike?");
+  });
+});
+
+describe("formatMarketValue", () => {
+  it("prints a flight's observed value as minutes, not as a price", () => {
+    expect(formatMarketValue("flights", 12n)).toBe("12 min");
+  });
+  it("keeps dollars for prices and drops them for reserve levels", () => {
+    expect(formatMarketValue("crypto", 6_306_236_000_000n)).toBe("$63,062.36");
+    expect(formatMarketValue("reserves", 900_000_000_000_000n)).toBe("9,000,000.00");
   });
 });

@@ -8,7 +8,7 @@ import {
   type Market,
   type TradeEvent,
 } from "../lib/types";
-import type { MarketEvent } from "../lib/events";
+import { ladderTitle, type MarketEvent } from "../lib/events";
 import { StrikeLadder } from "./StrikeLadder";
 import { Countdown } from "./Countdown";
 import { LivePrice } from "./LivePrice";
@@ -28,7 +28,10 @@ export function MarketCard({
 }) {
   const cat = category(market.categoryId);
   const yes = impliedYesPercent(market);
-  const no = yes === null ? null : 100 - yes;
+  // Round once, then derive No from the rounded Yes: rounding each side on its
+  // own showed 32.5 / 67.5 as "Yes 33% · No 68%", a book that sums to 101%.
+  const yesShown = yes === null ? null : Math.round(yes);
+  const no = yesShown === null ? null : 100 - yesShown;
 
   /**
    * A ladder card stands for five markets, so quoting one rung's strike in the
@@ -36,9 +39,7 @@ export function MarketCard({
    * is no event title on chain — every question embeds its own strike — so the
    * shared question is recovered by removing the price from it.
    */
-  const title = ladder
-    ? market.question.replace(/\$[\d,]+(\.\d+)?/, "…")
-    : market.question;
+  const title = ladder ? ladderTitle(market.question) : market.question;
 
   return (
     <div
@@ -128,7 +129,7 @@ export function MarketCard({
             ? `${ladder.rungs.length} strikes`
             : yes === null
               ? "No stakes yet"
-              : `Yes ${formatPercent(yes)} · No ${formatPercent(no)}`}
+              : `Yes ${formatPercent(yesShown)} · No ${formatPercent(no)}`}
         </span>
         <span style={{ whiteSpace: "nowrap" }}>{formatToken(totalPool(market))} pool</span>
       </div>

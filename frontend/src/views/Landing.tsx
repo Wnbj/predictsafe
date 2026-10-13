@@ -65,8 +65,21 @@ export function Landing({
         .map((event) => ({
           event,
           size: event.rungs.reduce((a, m) => a + totalPool(m), 0n),
+          // A question still open beats a bigger one already paid out: this
+          // row is the front door, and it used to show only finished markets.
+          active: event.rungs.some(
+            (m) => m.status !== MarketStatus.Settled && m.status !== MarketStatus.Void,
+          ),
         }))
-        .sort((a, b) => (b.size > a.size ? 1 : b.size < a.size ? -1 : 0))
+        .sort((a, b) =>
+          a.active !== b.active
+            ? Number(b.active) - Number(a.active)
+            : b.size > a.size
+              ? 1
+              : b.size < a.size
+                ? -1
+                : 0,
+        )
         .slice(0, 3),
     [markets],
   );

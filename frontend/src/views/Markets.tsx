@@ -4,8 +4,22 @@ import { isUnstakedAndResolved, totalPool } from "../lib/pricing";
 import type { CategoryId, Market, TradeEvent } from "../lib/types";
 import { MarketCard } from "../components/MarketCard";
 import { groupIntoEvents, isLadder } from "../lib/events";
+import { MarketStatus } from "../lib/types";
+import { CreateMarket } from "../components/CreateMarket";
+import type { WalletState } from "../hooks/useWallet";
 
 type SortMode = "backed" | "newest" | "closing";
+type StatusFilter = "all" | "active" | "resolved";
+
+const STATUSES: { key: StatusFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "active", label: "Active" },
+  { key: "resolved", label: "Resolved" },
+];
+
+/** Not yet paid out or refunded — still something to stake on or wait for. */
+const isActive = (m: Market) =>
+  m.status !== MarketStatus.Settled && m.status !== MarketStatus.Void;
 
 const SORTS: { key: SortMode; label: string }[] = [
   { key: "backed", label: "Most backed" },
@@ -19,7 +33,12 @@ export function Markets({
   categoryFilter,
   onCategoryFilter,
   onOpenMarket,
+  wallet,
+  onCreated,
 }: {
+  wallet: WalletState;
+  /** A market was just created: refresh, then open it. */
+  onCreated: (key: string) => Promise<void>;
   markets: Market[];
   tradeEvents: TradeEvent[];
   categoryFilter: CategoryId | "all";
@@ -28,6 +47,8 @@ export function Markets({
 }) {
   const [sort, setSort] = useState<SortMode>("backed");
   const [showRehearsals, setShowRehearsals] = useState(false);
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [creating, setCreating] = useState(false);
 
   /**
    * Markets that resolved without anyone staking — see `isUnstakedAndResolved`.
@@ -50,6 +71,8 @@ export function Markets({
     let out = showRehearsals
       ? [...inCategory]
       : inCategory.filter((m) => !isUnstakedAndResolved(m));
+    if (status === "active") out = out.filter(isActive);
+    else if (status === "resolved") out = out.filter((m) => !isActive(m));
 
     if (sort === "backed") {
       out.sort((a, b) => {
@@ -61,16 +84,37 @@ export function Markets({
     } else {
       out.sort((a, b) => a.closeTime - b.closeTime);
     }
+    // Whatever the sort, anything still active comes first: "Most backed" put
+    // weeks-old settled markets at the top of a board people come to trade on.
+    // Array.sort is stable, so the chosen order holds within each half.
+    out.sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
     return out;
-  }, [inCategory, showRehearsals, sort]);
+  }, [inCategory, showRehearsals, sort, status]);
+
+  const activeCount = useMemo(() => inCategory.filter(isActive).length, [inCategory]);
 
   return (
     <div className="page">
-      <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-2)" }}>
-        Markets
-      </h2>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          gap: "var(--space-3)",
+          flexWrap: "wrap",
+        }}
+      >
+        <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-2)" }}>
+          Markets
+        </h2>
+        {!creating && (
+          <button className="btn btn-accent" onClick={() => setCreating(true)}>
+            + Create market
+          </button>
+        )}
+      </div>
       <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
-        {filtered.length} market{filtered.length === 1 ? "" : "s"}
+        {filtered.length} market{filtered.length === 1 ? "" : "s"} · {activeCount} active
         {rehearsalCount > 0 && (
           <>
             {" · "}
@@ -86,6 +130,17 @@ export function Markets({
           </>
         )}
       </p>
+
+      {creating && (
+        <CreateMarket
+          wallet={wallet}
+          onClose={() => setCreating(false)}
+          onCreated={async (key) => {
+            setCreating(false);
+            await onCreated(key);
+          }}
+        />
+      )}
 
       <div
         style={{
@@ -118,6 +173,18 @@ export function Markets({
           ))}
         </div>
 
+        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+        <div className="seg">
+          {STATUSES.map((s) => (
+            <button
+              key={s.key}
+              className={status === s.key ? "active" : ""}
+              onClick={() => setStatus(s.key)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
         <div className="seg">
           {SORTS.map((s) => (
             <button
@@ -129,16 +196,24 @@ export function Markets({
             </button>
           ))}
         </div>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
         <div className="card" style={{ maxWidth: 520 }}>
           <div className="heading" style={{ fontSize: 17 }}>
-            Nothing here yet
+            {status === "active" ? "No active markets right now" : "Nothing here yet"}
           </div>
           <div className="muted" style={{ fontSize: 13 }}>
-            No markets match this filter.
+            {status === "active"
+              ? "Every market has resolved. Open one — it takes a minute and settles on its own."
+              : "No markets match this filter."}
           </div>
+          {status === "active" && !creating && (
+            <button className="btn btn-accent" onClick={() => setCreating(true)} style={{ alignSelf: "flex-start" }}>
+              + Create market
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid-3" style={{ maxWidth: 1300 }}>

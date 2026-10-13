@@ -839,6 +839,8 @@ export async function readLpEvents(): Promise<LpEvent[]> {
     amount: l.args.collateralIn,
     lpShares: l.args.lpSharesMinted,
     totalLpShares: l.args.totalLpShares,
+    yesResidual: l.args.yesResidual,
+    noResidual: l.args.noResidual,
     blockNumber: l.blockNumber,
     txHash: l.transactionHash,
   }));
@@ -1289,6 +1291,67 @@ export async function sendRequestSettlement(account: Address, market: Market) {
   });
 }
 
+/**
+ * Ask the connected wallet to list a token. Testnet tokens are on no wallet's
+ * default list, so without this a holder sees nothing in MetaMask and assumes
+ * the trade failed. One request per token — that is all EIP-747 allows.
+ * Resolves false if the wallet declined or does not support it.
+ */
+export async function watchToken(token: { address: string; symbol: string; decimals: number }): Promise<boolean> {
+  const provider = getActiveProvider();
+  if (!provider) return false;
+  try {
+    return Boolean(
+      await provider.request({
+        method: "wallet_watchAsset",
+        params: { type: "ERC20", options: token },
+      } as never),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function waitForTx(hash: `0x${string}`) {
   return publicClient.waitForTransactionReceipt({ hash });
+}
+
+/** CryptoMarket.Asset, in the contract's order. */
+export const CRYPTO_ASSETS = ["BTC", "ETH"] as const;
+export type CryptoAsset = (typeof CRYPTO_ASSETS)[number];
+
+/**
+ * Opens a crypto price market. `newMarket` is open to anyone and takes no
+ * collateral — the book starts empty — so the only cost is gas. Times are unix
+ * seconds; the strike carries 8 decimals, as the contract stores it.
+ */
+export async function sendCreateCryptoMarket(
+  account: Address,
+  params: { question: string; asset: CryptoAsset; strike: bigint; closeTime: number; expiryTime: number },
+) {
+  const wallet = walletClientFor(account);
+  return wallet.writeContract({
+    ...cryptoContract,
+    functionName: "newMarket",
+    args: [
+      params.question,
+      CRYPTO_ASSETS.indexOf(params.asset),
+      params.strike,
+      BigInt(params.closeTime),
+      BigInt(params.expiryTime),
+    ] as const,
+    chain,
+    account,
+  });
+}
+
+/** The id `MarketCreated` reports in a receipt from `sendCreateCryptoMarket`. */
+export async function createdCryptoMarketId(hash: `0x${string}`): Promise<number | null> {
+  const receipt = await waitForTx(hash);
+  const [created] = parseEventLogs({
+    abi: cryptoMarketAbi,
+    eventName: "MarketCreated",
+    logs: receipt.logs.filter((l) => l.address.toLowerCase() === CRYPTO_MARKET_ADDRESS.toLowerCase()),
+  });
+  return created ? Number(created.args.marketId) : null;
 }

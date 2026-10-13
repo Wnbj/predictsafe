@@ -225,6 +225,13 @@ export interface LpEvent {
   lpShares: bigint;
   /** The market's total AFTER this deposit. Zero on a withdrawal. */
   totalLpShares: bigint;
+  /**
+   * Shares a deposit hands back to the provider instead of pooling, to keep
+   * the price where it was. Redeemable like bought shares. Zero on a
+   * withdrawal; absent on events built before this was read.
+   */
+  yesResidual?: bigint;
+  noResidual?: bigint;
   blockNumber: bigint;
   txHash: `0x${string}`;
 }

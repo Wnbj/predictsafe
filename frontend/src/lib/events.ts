@@ -117,3 +117,19 @@ export function ladderFor(market: Market, markets: Market[]): MarketEvent | null
   const event = groupIntoEvents(markets).find((e) => e.key === key);
   return event && isLadder(event) ? event : null;
 }
+
+/**
+ * The question a whole ladder asks, recovered from one rung's question.
+ *
+ * There is no event title on chain — every rung embeds its own strike — so a
+ * ladder card used to cut the price out and leave "Will BTC be at or above …
+ * at expiry?", which reads as a rendering fault. The rungs share the asset and
+ * the moment, and differ only in the level, so the honest headline asks WHERE.
+ * Anything not in the "at or above $X" form is returned as it is.
+ */
+export function ladderTitle(question: string): string {
+  const m = /^Will (.+?) be at or above \$[\d,]+(?:\.\d+)?\s*(.*?)\?$/.exec(question.trim());
+  if (!m) return question;
+  const [, asset, when] = m;
+  return when ? `Where will ${asset} be ${when}?` : `Where will ${asset} be?`;
+}

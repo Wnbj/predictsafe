@@ -108,6 +108,9 @@ export function formatUsd(scaled: bigint): string {
  * state a figure the feed never published.
  */
 export function formatMarketValue(categoryId: string, scaled: bigint): string {
+  // A flight's "value" is its arrival delay in whole minutes, unscaled. Read as
+  // an 8-decimal price it printed every observed delay on /live as "$0.00".
+  if (categoryId === "flights") return `${scaled} min`;
   const money = formatUsd(scaled);
   return categoryId === "reserves" ? money.slice(1) : money;
 }

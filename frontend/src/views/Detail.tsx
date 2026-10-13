@@ -178,8 +178,27 @@ export function Detail({
           flexWrap: "wrap",
         }}
       >
-        {/* An em-dash at 44px reads as a stray rule, not as "no data yet". */}
-        {yes === null ? (
+        {/* Once resolved, the answer is the headline. The implied chance was
+            a forecast, and leading with "70%" on a market that has already
+            paid out reads as if it were still open. */}
+        {market.status === MarketStatus.Settled &&
+        (market.outcome === Outcome.Yes || market.outcome === Outcome.No) ? (
+          <div
+            className="heading"
+            style={{
+              fontSize: 44,
+              color:
+                market.outcome === Outcome.Yes ? "var(--color-accent-300)" : "var(--color-negative)",
+            }}
+          >
+            Resolved {outcomeLabel(market.outcome)}
+          </div>
+        ) : market.status === MarketStatus.Void ? (
+          <div className="heading muted" style={{ fontSize: 44 }}>
+            Void
+          </div>
+        ) : /* An em-dash at 44px reads as a stray rule, not as "no data yet". */
+        yes === null ? (
           <div className="heading muted" style={{ fontSize: 22 }}>
             No odds yet
           </div>
@@ -200,9 +219,32 @@ export function Detail({
           </>
         )}
         <div className="muted" style={{ fontSize: 13 }}>
-          {yes === null ? "first stake sets the price" : "implied chance of Yes"} ·{" "}
-          {formatToken(totalPool(market))} staked
-          {market.status !== MarketStatus.Open && ` · ${statusLabel(market.status)}`}
+          {market.status === MarketStatus.Settled ? (
+            <>
+              {settlement && settlement.outcome !== Outcome.Void && (
+                <>
+                  observed {formatMarketValue(market.categoryId, settlement.observedValue)} against{" "}
+                  {market.categoryId === "flights"
+                    ? `a ${market.thresholdMinutes} min threshold`
+                    : `a strike of ${formatMarketValue(market.categoryId, market.strikePrice)}`}{" "}
+                  ·{" "}
+                </>
+              )}
+              final odds {formatPercent(yes)} · {formatToken(totalPool(market))} staked
+            </>
+          ) : market.status === MarketStatus.Void ? (
+            <>
+              {totalPool(market) > 0n
+                ? `stakes refunded · ${formatToken(totalPool(market))} staked`
+                : "no stakes were placed"}
+            </>
+          ) : (
+            <>
+              {yes === null ? "first stake sets the price" : "implied chance of Yes"} ·{" "}
+              {formatToken(totalPool(market))} staked
+              {market.status !== MarketStatus.Open && ` · ${statusLabel(market.status)}`}
+            </>
+          )}
         </div>
       </div>
 

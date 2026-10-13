@@ -146,3 +146,15 @@ export const blockUrl = (block: bigint) => `${EXPLORER}/block/${block}`;
 /** MockUSDC is 6-decimal, like real USDC. */
 export const TOKEN_DECIMALS = 6;
 export const TOKEN_SYMBOL = "mUSDC";
+
+/**
+ * The exchange's synthetic tokens, for "Add to wallet". Deployed by
+ * AssetExchange itself on `listAsset`, so they change only if it does.
+ */
+export const EXCHANGE_TOKENS = [
+  { address: "0xF08cC188Ed24d8dFDd62445cA88D84775aD792e1", symbol: "sXAU", decimals: 18 },
+  { address: "0xA82D955E2e8B855aE83CBf10468772c4e1E1C64E", symbol: "sCSPX", decimals: 18 },
+] as const;
+
+/** Where to get Sepolia ETH for gas. */
+export const SEPOLIA_FAUCET_URL = "https://cloud.google.com/application/web3/faucet/ethereum/sepolia";

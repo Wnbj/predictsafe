@@ -103,7 +103,13 @@ export default function App() {
 
   return (
     <SpotProvider symbols={liveSymbols}>
-      <Nav view={view} onNavigate={navigate} wallet={wallet} balance={data.balance} />
+      <Nav
+        view={view}
+        onNavigate={navigate}
+        wallet={wallet}
+        balance={data.balance}
+        onBalanceChange={data.refresh}
+      />
 
       {data.error && (
         <div
@@ -192,6 +198,11 @@ export default function App() {
 
           {view === "markets" && (
             <Markets
+              wallet={wallet}
+              onCreated={async (key) => {
+                await data.refresh();
+                openMarket(key);
+              }}
               markets={data.markets}
               tradeEvents={data.tradeEvents}
               categoryFilter={categoryFilter}
