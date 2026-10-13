@@ -140,7 +140,11 @@ export function Nav({
  * choice. So more than one discovered wallet gets a picker.
  */
 function ConnectControl({ wallet }: { wallet: WalletState }) {
-  const [open, setOpen] = useState(false);
+  // Lives in the wallet hook, so a Connect button anywhere on the page can
+  // open this picker rather than silently doing nothing.
+  const open = wallet.pickerOpen;
+  const setOpen = (v: boolean | ((prev: boolean) => boolean)) =>
+    wallet.setPickerOpen(typeof v === "function" ? v(wallet.pickerOpen) : v);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

@@ -20,8 +20,14 @@ export interface WalletState {
   wallets: WalletOption[];
   connectedWalletName: string | null;
   wrongNetwork: boolean;
-  /** Connect with a specific wallet. Omit to use the only/remembered one. */
+  /**
+   * Connect with a specific wallet. Omit to use the only/remembered one — or,
+   * with several installed and none remembered, to open the picker.
+   */
   connect: (option?: WalletOption) => Promise<void>;
+  /** The nav's wallet picker. Any Connect button can open it via `connect()`. */
+  pickerOpen: boolean;
+  setPickerOpen: (open: boolean) => void;
   disconnect: () => Promise<void>;
   switchNetwork: () => Promise<void>;
 }
@@ -46,6 +52,7 @@ export function useWallet(): WalletState {
   const [connected, setConnected] = useState<WalletOption | null>(null);
   /** Set by an explicit disconnect, so a wallet event cannot sign the user back in. */
   const [dismissed, setDismissed] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => subscribeToWallets(setWallets), []);
 
@@ -94,10 +101,15 @@ export function useWallet(): WalletState {
           await request(legacy, null);
           return;
         }
-        // Several wallets and no pick yet — the picker in the UI handles this.
+        // Several wallets and no pick yet. This used to return silently on
+        // the assumption that the nav's picker was the caller — but Connect
+        // buttons in the market panel, Trade and Portfolio call this too, and
+        // on a domain with no remembered wallet they did nothing at all.
+        setPickerOpen(true);
         return;
       }
 
+      setPickerOpen(false);
       setActiveProvider(chosen.provider);
       rememberWallet(chosen.info.rdns);
       await request(chosen.provider, chosen);
@@ -193,6 +205,8 @@ export function useWallet(): WalletState {
     connectedWalletName: connected?.info.name ?? null,
     wrongNetwork: account !== null && chainId !== null && chainId !== chain.id,
     connect,
+    pickerOpen,
+    setPickerOpen,
     disconnect,
     switchNetwork,
   };
