@@ -515,7 +515,10 @@ export function Detail({
           )}
         </div>
 
-        <div>
+        {/* One sticky column, not two sticky panels: each panel stuck at the
+            same offset, so scrolling slid the liquidity card over the trade
+            card instead of carrying both down together. */}
+        <div className="trade-column">
           <TradePanel
             market={market}
             wallet={wallet}
