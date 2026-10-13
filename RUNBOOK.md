@@ -190,6 +190,28 @@ creation is priced far higher there. Two things follow:
 Ordinary calls are unaffected in practice: `requestSettlement` estimates at
 ~33k on the node.
 
+### Verify the source on Etherscan
+
+All ten deployed contracts are verified as of 2026-10-14 — the five markets,
+MockUSDC, AssetExchange and its two tokens, and SettlementKeeper. Unverified,
+MetaMask showed users an "unknown contract" warning on every transaction. Do
+it for anything new as soon as it is deployed; the key lives in
+`contracts/.env` as `ETHERSCAN_API_KEY` (gitignored by `*.env`).
+
+```bash
+set -a; source .env; set +a
+forge verify-contract <address> src/File.sol:Contract --chain sepolia \
+  --rpc-url $RPC --guess-constructor-args --watch
+```
+
+`--guess-constructor-args` reads the arguments from the creation
+transaction, which works for anything the deployer created directly. A
+contract created BY another contract — the exchange's `SyntheticAsset`
+tokens — has no creation transaction of its own: pass `--constructor-args`
+instead (`cast abi-encode 'c(string,string)' "<name>" "<symbol>"`). Etherscan
+then matches identical bytecode by itself, which is why sCSPX reported
+"already verified" once sXAU was.
+
 ### Check it landed, before trusting it
 
 ```bash
