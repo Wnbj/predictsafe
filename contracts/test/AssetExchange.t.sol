@@ -4,7 +4,9 @@ pragma solidity ^0.8.24;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {AssetExchange, SyntheticAsset, IPriceFeed} from "../src/AssetExchange.sol";
+import {AssetExchange, ISyntheticToken, IPriceFeed} from "../src/AssetExchange.sol";
+import {CrossChainToken} from "@chainlink/contracts-ccip/contracts/tokens/CrossChainToken.sol";
+import {BaseERC20} from "@chainlink/contracts-ccip/contracts/tokens/BaseERC20.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 
 /// A feed whose rounds the test publishes by hand, numbered the way a real
@@ -49,7 +51,7 @@ contract AssetExchangeTest is Test {
     AssetExchange internal ex;
     MockUSDC internal usdc;
     MockFeed internal gold;
-    SyntheticAsset internal sXAU;
+    CrossChainToken internal sXAU;
 
     address internal forwarder = address(0xF0);
     address internal alice = address(0xA11CE);
@@ -77,9 +79,9 @@ contract AssetExchangeTest is Test {
         ex = new AssetExchange(IERC20(address(usdc)), forwarder);
         ex.setExpectedAuthor(address(this));
         ex.setExpectedWorkflowName(WF);
-        ex.listAsset("XAU", "Synthetic Gold", gold);
-        (,, address token,,) = ex.asset(0);
-        sXAU = SyntheticAsset(token);
+        sXAU = _token("Synthetic Gold", "sXAU");
+        sXAU.grantMintAndBurnRoles(address(ex));
+        ex.listAsset("XAU", gold, ISyntheticToken(address(sXAU)));
 
         usdc.mint(address(this), 100_000e6);
         usdc.approve(address(ex), type(uint256).max);
@@ -88,9 +90,31 @@ contract AssetExchangeTest is Test {
         for (uint256 i = 0; i < 2; i++) {
             address who = i == 0 ? alice : bob;
             usdc.mint(who, 10_000e6);
-            vm.prank(who);
+            vm.startPrank(who);
             usdc.approve(address(ex), type(uint256).max);
+            // CCT tokens burn against an allowance: a seller approves the
+            // exchange once, as the app does in the same batch as the order.
+            sXAU.approve(address(ex), type(uint256).max);
+            vm.stopPrank();
         }
+    }
+
+    /// The same token the deploy script makes: 18 decimals, no cap, this test
+    /// contract as owner, CCIP admin and burn/mint role admin.
+    function _token(string memory name, string memory symbol) internal returns (CrossChainToken) {
+        return new CrossChainToken(
+            BaseERC20.ConstructorParams({
+                name: name,
+                symbol: symbol,
+                maxSupply: 0,
+                preMint: 0,
+                preMintRecipient: address(0),
+                decimals: 18,
+                ccipAdmin: address(this)
+            }),
+            address(this),
+            address(this)
+        );
     }
 
     // --- helpers ------------------------------------------------------------
@@ -113,27 +137,46 @@ contract AssetExchangeTest is Test {
 
     // --- listing --------------------------------------------------------------
 
-    function test_listAsset_deploysAnExchangeOwnedToken() public view {
-        (string memory symbol, address feed,, uint8 dec, bool active) = ex.asset(0);
+    function test_listAsset_recordsTheGivenToken() public view {
+        (string memory symbol, address feed, address token, uint8 dec, bool active) = ex.asset(0);
         assertEq(symbol, "XAU");
         assertEq(feed, address(gold));
+        assertEq(token, address(sXAU));
         assertEq(dec, 8);
         assertTrue(active);
-        assertEq(sXAU.symbol(), "sXAU");
-        assertEq(sXAU.exchange(), address(ex));
+        assertEq(sXAU.getCCIPAdmin(), address(this), "registrable with CCIP by its admin");
     }
 
     function test_listAsset_onlyOwner() public {
         vm.prank(alice);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        ex.listAsset("CSPX", "Synthetic S&P 500", gold);
+        ex.listAsset("CSPX", gold, ISyntheticToken(address(sXAU)));
     }
 
-    function test_token_onlyExchangeMintsOrBurns() public {
-        vm.expectRevert(SyntheticAsset.OnlyExchange.selector);
+    function test_listAsset_refusesAMissingToken() public {
+        vm.expectRevert(AssetExchange.UnknownAsset.selector);
+        ex.listAsset("CSPX", gold, ISyntheticToken(address(0)));
+    }
+
+    /// Only role holders — the exchange and, on a live deploy, the CCIP pool —
+    /// can mint. Anyone else is refused by the token itself.
+    function test_token_onlyRoleHoldersMint() public {
+        vm.prank(alice);
+        vm.expectRevert();
         sXAU.mint(alice, 1);
-        vm.expectRevert(SyntheticAsset.OnlyExchange.selector);
-        sXAU.burn(alice, 1);
+    }
+
+    /// A sell burns against an allowance, never without one.
+    function test_sell_needsTheSellersAllowance() public {
+        uint256 id = _buy(bob, 1_000e6);
+        gold.push(P1);
+        ex.fill(_ids(id));
+        uint256 tokens = sXAU.balanceOf(bob);
+        vm.startPrank(bob);
+        sXAU.approve(address(ex), 0);
+        vm.expectRevert();
+        ex.placeSell(0, tokens);
+        vm.stopPrank();
     }
 
     // --- the rule: the NEXT new price, never a known one --------------------------

@@ -7,6 +7,8 @@ import {
   marketState,
 } from "../lib/exchange";
 import { useExchange } from "../hooks/useExchange";
+import { bridgeReady } from "../lib/ccip";
+import { BridgeControls } from "./BridgeControls";
 
 /**
  * The portfolio's view of the exchange: tokens held and orders still waiting.
@@ -17,7 +19,7 @@ import { useExchange } from "../hooks/useExchange";
  * would sum things that are not the same kind of money.
  */
 export function TokenizedHoldings({ account, onOpenTrade }: { account: Address; onOpenTrade: () => void }) {
-  const { state, error, now } = useExchange(account);
+  const { state, error, now, reload } = useExchange(account);
 
   return (
     <section style={{ margin: "var(--space-4) 0 var(--space-8)", maxWidth: 1200 }}>
@@ -31,7 +33,8 @@ export function TokenizedHoldings({ account, onOpenTrade }: { account: Address; 
         !error && <div className="muted" style={{ fontSize: 13 }}>Loading…</div>
       ) : (
         (() => {
-          const rows = holdingsFor(state, account);
+          const bridged = state.assets.some((a) => bridgeReady(`s${a.symbol}`));
+          const rows = holdingsFor(state, account, bridged);
           if (rows.length === 0) {
             return (
               <div className="card" style={{ maxWidth: 520 }}>
@@ -55,6 +58,7 @@ export function TokenizedHoldings({ account, onOpenTrade }: { account: Address; 
                       <th>Latest price</th>
                       <th>Value</th>
                       <th>Waiting to fill</th>
+                      {bridged && <th>Cross-chain (CCIP)</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -82,6 +86,16 @@ export function TokenizedHoldings({ account, onOpenTrade }: { account: Address; 
                               </div>
                             )}
                           </td>
+                          {bridged && (
+                            <td>
+                              <BridgeControls
+                                account={account}
+                                symbol={`s${h.asset.symbol}`}
+                                sepoliaBalance={h.asset.balance}
+                                onDone={() => void reload()}
+                              />
+                            </td>
+                          )}
                         </tr>
                       );
                     })}

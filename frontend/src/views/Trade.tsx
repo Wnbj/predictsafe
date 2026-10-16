@@ -18,7 +18,7 @@ import {
   sendCancel,
   sendFill,
   placeBuyCall,
-  sendPlaceSell,
+  placeSellCall,
   valueOf,
   type ExchangeAsset,
   type ExchangeOrder,
@@ -246,6 +246,7 @@ function OrderPanel({
   const buy = side === "buy" && amount ? estimateBuy(amount, price, asset.feedDecimals) : null;
   const sell = side === "sell" && amount ? estimateSell(amount, price, asset.feedDecimals) : null;
   const needsApproval = side === "buy" && amount !== null && usdc.allowance < amount;
+  const sellNeedsApproval = side === "sell" && amount !== null && asset.allowance < amount;
   const insufficient =
     amount !== null && (side === "buy" ? amount > usdc.balance : amount > asset.balance);
 
@@ -263,7 +264,10 @@ function OrderPanel({
     }
   };
 
-  const placeBuy = async () => {
+  // Both sides spend a token the exchange must be allowed to take: mUSDC on a
+  // buy, the asset itself on a sell (it is burned). One helper, one prompt
+  // where the wallet batches.
+  const placeOrder = async () => {
     if (!account || !amount) return;
     setBusy("placing");
     setError(null);
@@ -272,8 +276,9 @@ function OrderPanel({
         account,
         spender: EXCHANGE_ADDRESS,
         amount,
-        allowance: usdc.allowance,
-        call: placeBuyCall(asset.id, amount),
+        ...(side === "buy"
+          ? { allowance: usdc.allowance, call: placeBuyCall(asset.id, amount) }
+          : { allowance: asset.allowance, token: asset.token, call: placeSellCall(asset.id, amount) }),
         label: "Order",
         onApproving: () => setBusy("approving"),
       });
@@ -386,11 +391,7 @@ function OrderPanel({
       <button
         className="btn btn-accent"
         disabled={busy !== null || !amount || amount === 0n || insufficient || !asset.active}
-        onClick={() =>
-          side === "buy"
-            ? void placeBuy()
-            : void run("placing", (a) => sendPlaceSell(a, asset.id, amount!))
-        }
+        onClick={() => void placeOrder()}
       >
         {busy === "approving"
           ? "Approving…"
@@ -404,7 +405,9 @@ function OrderPanel({
                 ? needsApproval
                   ? "Approve & place buy order"
                   : "Place buy order"
-                : "Place sell order"}
+                : sellNeedsApproval
+                  ? "Approve & place sell order"
+                  : "Place sell order"}
       </button>
 
       {error && <div style={{ fontSize: 12, color: "var(--color-negative)" }}>{error}</div>}

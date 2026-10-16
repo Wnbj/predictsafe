@@ -135,7 +135,7 @@ describe("holdings", () => {
     id, symbol: id === 0 ? "XAU" : "CSPX", name: id === 0 ? "Gold" : "S&P 500 ETF",
     feed: "0x0000000000000000000000000000000000000001", token: "0x0000000000000000000000000000000000000002",
     feedDecimals: 8, active: true, latest: round(P1, 0, 1n), lastChange: null, cadenceSeconds: 3_600,
-    totalSupply: balance, balance,
+    totalSupply: balance, balance, allowance: 0n,
   });
   const order = (o: Partial<ExchangeOrder>): ExchangeOrder => ({
     id: 0, trader: alice, assetId: 0, side: "buy", status: "pending", placedRound: 1n, placedAt: 0,

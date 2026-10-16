@@ -25,11 +25,14 @@ export const AMM_MARKET_ADDRESS = (import.meta.env.VITE_AMM_MARKET_ADDRESS ??
 
 /**
  * The synthetic-asset exchange: gold and S&P 500 tokens priced by Chainlink
- * Data Feeds, every order filled at the next NEW price. Deployed 2026-09-25.
+ * Data Feeds, every order filled at the next NEW price. Its tokens are CCIP
+ * cross-chain tokens (burn & mint) that also live on Base Sepolia — lib/ccip.
+ * Deployed 2026-10-17; it replaced the first exchange (0x2118…c94D), whose
+ * tokens could not be registered with CCIP and which the app no longer reads.
  * Not a market contract — it settles nothing and is not scanned for logs.
  */
 export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
-  "0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D") as `0x${string}`;
+  "0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2") as `0x${string}`;
 
 export const TOKEN_ADDRESS = (import.meta.env.VITE_TOKEN_ADDRESS ??
   "0xcd123a8d74ef062dddd2287e87bc88eb3b208b54") as `0x${string}`;
@@ -152,8 +155,8 @@ export const TOKEN_SYMBOL = "mUSDC";
  * AssetExchange itself on `listAsset`, so they change only if it does.
  */
 export const EXCHANGE_TOKENS = [
-  { address: "0xF08cC188Ed24d8dFDd62445cA88D84775aD792e1", symbol: "sXAU", decimals: 18 },
-  { address: "0xA82D955E2e8B855aE83CBf10468772c4e1E1C64E", symbol: "sCSPX", decimals: 18 },
+  { address: "0x502640827C31ce347FBe42a5bD6e08Dc98C4a9E0", symbol: "sXAU", decimals: 18 },
+  { address: "0x2f42A5233311B1Ee291Bfd958039A0449E1F03CD", symbol: "sCSPX", decimals: 18 },
 ] as const;
 
 /** Where to get Sepolia ETH for gas. */

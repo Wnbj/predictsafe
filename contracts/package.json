@@ -1,0 +1,9 @@
+{
+  "name": "predictsafe-contracts",
+  "private": true,
+  "description": "Solidity dependencies resolved from npm. forge-std and OpenZeppelin come from lib/ via forge install; the CCIP contracts come from here.",
+  "dependencies": {
+    "@chainlink/contracts-ccip": "2.0.0",
+    "@chainlink/contracts": "1.5.0"
+  }
+}

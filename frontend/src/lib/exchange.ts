@@ -36,6 +36,7 @@ const feedAbi = parseAbi([
 const erc20Abi = parseAbi([
   "function balanceOf(address) view returns (uint256)",
   "function totalSupply() view returns (uint256)",
+  "function allowance(address owner, address spender) view returns (uint256)",
 ]);
 
 /** Mirrors the contract's constants. */
@@ -76,6 +77,11 @@ export interface ExchangeAsset {
   totalSupply: bigint;
   /** The connected wallet's holding, 18 decimals. 0 when none is connected. */
   balance: bigint;
+  /**
+   * What the connected wallet lets the exchange burn. A sell burns against an
+   * allowance — the tokens are CCIP cross-chain tokens, whose burn needs one.
+   */
+  allowance: bigint;
 }
 
 export type OrderSide = "buy" | "sell";
@@ -217,7 +223,12 @@ export interface Holding {
  * Per asset: the wallet's holding and its orders still waiting. Assets with
  * neither are left out, so an empty list means "nothing here", not "zero".
  */
-export function holdingsFor(state: ExchangeState, account: Address): Holding[] {
+/**
+ * `includeEmpty` keeps assets the wallet holds none of on Sepolia — once the
+ * bridge exists, its tokens may all be on Base Sepolia, and the row is where
+ * they are brought back from.
+ */
+export function holdingsFor(state: ExchangeState, account: Address, includeEmpty = false): Holding[] {
   const mine = state.orders.filter(
     (o) => o.status === "pending" && o.trader.toLowerCase() === account.toLowerCase(),
   );
@@ -225,7 +236,7 @@ export function holdingsFor(state: ExchangeState, account: Address): Holding[] {
     const own = mine.filter((o) => o.assetId === asset.id);
     const buys = own.filter((o) => o.side === "buy");
     const sells = own.filter((o) => o.side === "sell");
-    if (asset.balance === 0n && own.length === 0) return [];
+    if (!includeEmpty && asset.balance === 0n && own.length === 0) return [];
     return [{
       asset,
       value: valueOf(asset.balance, asset.latest.answer, asset.feedDecimals),
@@ -311,12 +322,14 @@ export async function readExchange(account: Address | null): Promise<ExchangeSta
   // portfolio waits on the slowest of these behind every market read.
   const assets: ExchangeAsset[] = await Promise.all(
     rows.map(async ([symbol, feed, token, feedDecimals, active], i) => {
-      const [history, [supply, balance]] = await Promise.all([
+      const holder = account ?? EXCHANGE_ADDRESS;
+      const [history, [supply, balance, allowance]] = await Promise.all([
         readHistory(feed),
         priorityClient.multicall({
           contracts: [
             { address: token, abi: erc20Abi, functionName: "totalSupply" },
-            { address: token, abi: erc20Abi, functionName: "balanceOf", args: [account ?? EXCHANGE_ADDRESS] },
+            { address: token, abi: erc20Abi, functionName: "balanceOf", args: [holder] },
+            { address: token, abi: erc20Abi, functionName: "allowance", args: [holder, EXCHANGE_ADDRESS] },
           ],
           allowFailure: false,
         }),
@@ -334,6 +347,7 @@ export async function readExchange(account: Address | null): Promise<ExchangeSta
         cadenceSeconds: medianGap(history),
         totalSupply: supply,
         balance: account ? balance : 0n,
+        allowance: account ? allowance : 0n,
       };
     }),
   );
@@ -377,6 +391,14 @@ export async function readExchange(account: Address | null): Promise<ExchangeSta
 }
 
 // --- writes ----------------------------------------------------------------------
+
+/** `placeSell` as data: the exchange burns the tokens against an allowance. */
+export const placeSellCall = (assetId: number, tokensIn: bigint): ContractCall => ({
+  address: EXCHANGE_ADDRESS,
+  abi: exchangeAbi as unknown as readonly unknown[],
+  functionName: "placeSell",
+  args: [assetId, tokensIn],
+});
 
 /** `placeBuy` as data, for a batch with its approval (lib/approval). */
 export const placeBuyCall = (assetId: number, usdcIn: bigint): ContractCall => ({

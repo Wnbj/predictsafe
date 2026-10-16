@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -16,29 +15,22 @@ interface IPriceFeed {
 }
 
 /**
- * @title SyntheticAsset
- * @notice An ERC-20 that only its exchange can mint or burn. Holding one is a
- *         claim on the exchange's reserve at the asset's feed price — it is not
- *         a share of anything, and nothing stands behind it but that reserve.
+ * @notice What the exchange needs from an asset token: Chainlink's
+ *         `CrossChainToken` (CCIP's cross-chain token standard) provides both,
+ *         behind MINTER_ROLE and BURNER_ROLE, which the exchange must be granted.
+ *
+ * The tokens used to be created by the exchange itself, minted and burned by it
+ * alone. That made them impossible to register with CCIP — registration needs
+ * an admin the token names, and a token whose only authority is a contract has
+ * none — so they could never leave Sepolia. Now each token is deployed on its
+ * own, CCIP-registered, and the exchange is one of its minters and burners; a
+ * CCIP pool is the other. Holding one is still a claim on THIS exchange's
+ * reserve at the feed price, on whichever chain it happens to be.
  */
-contract SyntheticAsset is ERC20 {
-    address public immutable exchange;
-
-    error OnlyExchange();
-
-    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {
-        exchange = msg.sender;
-    }
-
-    function mint(address to, uint256 amount) external {
-        if (msg.sender != exchange) revert OnlyExchange();
-        _mint(to, amount);
-    }
-
-    function burn(address from, uint256 amount) external {
-        if (msg.sender != exchange) revert OnlyExchange();
-        _burn(from, amount);
-    }
+interface ISyntheticToken {
+    function mint(address account, uint256 amount) external;
+    /// Spends the caller's allowance from `account`. A seller approves first.
+    function burnFrom(address account, uint256 amount) external;
 }
 
 /**
@@ -98,7 +90,7 @@ contract AssetExchange is ReceiverTemplate {
     struct Asset {
         string symbol;
         IPriceFeed feed;
-        SyntheticAsset token;
+        ISyntheticToken token;
         uint8 feedDecimals;
         bool active;
     }
@@ -206,20 +198,20 @@ contract AssetExchange is ReceiverTemplate {
     // --- assets ------------------------------------------------------------
 
     /**
-     * List an asset and deploy its token. Owner-only because the feed decides
-     * every price: a caller-supplied feed would let anyone price an asset from
-     * a contract they control.
+     * List an asset against a token deployed beforehand, which must already
+     * have granted this contract MINTER_ROLE and BURNER_ROLE. Owner-only
+     * because the feed decides every price: a caller-supplied feed would let
+     * anyone price an asset from a contract they control.
      */
-    function listAsset(string calldata symbol, string calldata name, IPriceFeed feed)
+    function listAsset(string calldata symbol, IPriceFeed feed, ISyntheticToken token)
         external
         onlyOwner
         returns (uint32 assetId)
     {
-        if (address(feed) == address(0)) revert UnknownAsset();
+        if (address(feed) == address(0) || address(token) == address(0)) revert UnknownAsset();
         (, int256 answer,,,) = feed.latestRoundData();
         if (answer <= 0) revert BadFeedPrice();
 
-        SyntheticAsset token = new SyntheticAsset(name, string.concat("s", symbol));
         assetId = uint32(_assets.length);
         _assets.push(Asset({
             symbol: symbol,
@@ -256,10 +248,11 @@ contract AssetExchange is ReceiverTemplate {
     }
 
     /// Give up `tokensIn` now; receive mUSDC at the next new price. The tokens
-    /// are burned immediately and re-minted if the order is refunded.
+    /// are burned immediately — against an allowance the seller gives this
+    /// contract first — and re-minted if the order is refunded.
     function placeSell(uint32 assetId, uint256 tokensIn) external returns (uint256 orderId) {
         if (tokensIn == 0) revert ZeroAmount();
-        _assetOrRevert(assetId).token.burn(msg.sender, tokensIn);
+        _assetOrRevert(assetId).token.burnFrom(msg.sender, tokensIn);
         orderId = _place(assetId, Side.Sell, tokensIn);
     }
 

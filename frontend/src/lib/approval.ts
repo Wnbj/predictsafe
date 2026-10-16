@@ -1,6 +1,6 @@
 import { encodeFunctionData, type Abi, type Address } from "viem";
-import { approveCall, waitForTx, walletClientFor, type ContractCall } from "./chain";
-import { chain, TOKEN_DECIMALS, TOKEN_SYMBOL } from "./config";
+import { approveCall, SEPOLIA_NETWORK, waitForTx, walletClientOn, type ContractCall, type TxNetwork } from "./chain";
+import { TOKEN_ADDRESS, TOKEN_DECIMALS, TOKEN_SYMBOL } from "./config";
 import { getActiveProvider } from "./providers";
 import { dismissToast, showToast } from "./toasts";
 
@@ -26,15 +26,16 @@ export const ALLOWANCE_HEADROOM = 1_000n * 10n ** BigInt(TOKEN_DECIMALS);
 
 export const headroomLabel = `${ALLOWANCE_HEADROOM / 10n ** BigInt(TOKEN_DECIMALS)} ${TOKEN_SYMBOL}`;
 
-const CHAIN_HEX = `0x${chain.id.toString(16)}`;
-
 type Capabilities = Record<string, { atomic?: { status?: string }; atomicBatch?: { supported?: boolean } }>;
 
 const batchSupport = new Map<string, boolean>();
 
-/** Whether the connected wallet will run several calls as one, atomically. */
-export async function canBatch(account: Address): Promise<boolean> {
-  const key = account.toLowerCase();
+const hexId = (id: number) => `0x${id.toString(16)}`;
+
+/** Whether the connected wallet will run several calls as one, atomically, on `chainId`. */
+export async function canBatch(account: Address, chainId: number = SEPOLIA_NETWORK.chain.id): Promise<boolean> {
+  const CHAIN_HEX = hexId(chainId);
+  const key = `${account.toLowerCase()}:${chainId}`;
   const known = batchSupport.get(key);
   if (known !== undefined) return known;
   const provider = getActiveProvider();
@@ -45,7 +46,7 @@ export async function canBatch(account: Address): Promise<boolean> {
         method: "wallet_getCapabilities",
         params: [account, [CHAIN_HEX]],
       } as never)) as Capabilities;
-      const c = caps?.[CHAIN_HEX] ?? caps?.[String(chain.id)];
+      const c = caps?.[CHAIN_HEX] ?? caps?.[String(chainId)];
       // "ready" means the wallet can upgrade the account to batch on the spot
       // and will ask the user itself; "supported" means it already can. The
       // atomicBatch shape is the draft MetaMask shipped first.
@@ -61,7 +62,7 @@ export async function canBatch(account: Address): Promise<boolean> {
 const encode = (c: ContractCall) => ({
   to: c.address,
   data: encodeFunctionData({ abi: c.abi as Abi, functionName: c.functionName, args: c.args as never }),
-  value: "0x0",
+  value: `0x${(c.value ?? 0n).toString(16)}`,
 });
 
 /** Polls `wallet_getCallsStatus` until the batch is mined; returns its last tx. */
@@ -100,29 +101,38 @@ export interface ApprovedWrite {
   label: string;
   /** Called when a separate approval step starts, for a panel's busy state. */
   onApproving?: () => void;
+  /** The token being spent. Defaults to mUSDC. */
+  token?: Address;
+  /** The chain it all happens on. Defaults to Sepolia. */
+  network?: TxNetwork;
 }
 
 /** Sends the call, approving first if needed; resolves once it is confirmed. */
 export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`> {
-  const wallet = walletClientFor(w.account);
+  const network = w.network ?? SEPOLIA_NETWORK;
+  const token = w.token ?? TOKEN_ADDRESS;
+  const provider = getActiveProvider();
+  if (!provider) throw new Error("No wallet connected");
+  const wallet = walletClientOn(w.account, network.chain);
   const send = (c: ContractCall) =>
     wallet.writeContract({
       address: c.address,
       abi: c.abi as Abi,
       functionName: c.functionName,
       args: c.args,
-      chain,
+      value: c.value,
+      chain: network.chain,
       account: w.account,
     } as never) as Promise<`0x${string}`>;
 
   if (w.allowance >= w.amount) {
     const hash = await send(w.call);
-    await waitForTx(hash, w.label);
+    await waitForTx(hash, w.label, network);
     return hash;
   }
 
-  if (await canBatch(w.account)) {
-    const provider = getActiveProvider()!;
+  if (await canBatch(w.account, network.chain.id)) {
+    const CHAIN_HEX = hexId(network.chain.id);
     const sent = (await provider.request({
       method: "wallet_sendCalls",
       params: [
@@ -131,7 +141,7 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
           chainId: CHAIN_HEX,
           from: w.account,
           atomicRequired: true,
-          calls: [encode(approveCall(w.spender, w.amount)), encode(w.call)],
+          calls: [encode(approveCall(w.spender, w.amount, token)), encode(w.call)],
         },
       ],
     } as never)) as { id: string } | string;
@@ -140,7 +150,7 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
     try {
       const hash = await waitForBatch(id);
       dismissToast(id);
-      await waitForTx(hash, w.label); // confirms at once; also catches a revert
+      await waitForTx(hash, w.label, network); // confirms at once; also catches a revert
       return hash;
     } catch (e) {
       showToast({ id, state: "error", title: `${w.label} failed`, detail: e instanceof Error ? e.message : String(e) });
@@ -149,10 +159,12 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
   }
 
   w.onApproving?.();
-  const approval = w.amount > ALLOWANCE_HEADROOM ? w.amount : ALLOWANCE_HEADROOM;
-  const approveHash = await send(approveCall(w.spender, approval));
-  await waitForTx(approveHash, "Approval");
+  // Headroom is for mUSDC stakes, the thing people repeat. Any other token —
+  // an asset sold back, a bridge transfer — is approved for exactly the amount.
+  const approval = token === TOKEN_ADDRESS && w.amount < ALLOWANCE_HEADROOM ? ALLOWANCE_HEADROOM : w.amount;
+  const approveHash = await send(approveCall(w.spender, approval, token));
+  await waitForTx(approveHash, "Approval", network);
   const hash = await send(w.call);
-  await waitForTx(hash, w.label);
+  await waitForTx(hash, w.label, network);
   return hash;
 }

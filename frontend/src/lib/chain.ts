@@ -6,6 +6,7 @@ import {
   parseAbiItem,
   parseEventLogs,
   type Address,
+  type Chain,
 } from "viem";
 import { getActiveProvider } from "./providers";
 import { showToast } from "./toasts";
@@ -196,6 +197,13 @@ export const priorityClient = createPublicClient({
  * lib/providers for why `window.ethereum` is not that wallet when several
  * extensions are installed.
  */
+/** A signer on any chain — Base Sepolia for a bridge back, say. */
+export function walletClientOn(account: Address, onChain: Chain) {
+  const provider = getActiveProvider();
+  if (!provider) throw new Error("No wallet connected");
+  return createWalletClient({ account, chain: onChain, transport: custom(provider) });
+}
+
 export function walletClientFor(account: Address) {
   const provider = getActiveProvider();
   if (!provider) throw new Error("No wallet connected");
@@ -1314,12 +1322,22 @@ export async function watchToken(token: { address: string; symbol: string; decim
  * resolves either way, so a stake the contract refused used to be treated as
  * done: the panel refreshed, showed nothing new, and said nothing at all.
  */
-export async function waitForTx(hash: `0x${string}`, label = "Transaction") {
-  const href = txUrl(hash);
-  showToast({ id: hash, state: "pending", title: `${label} sent`, detail: "Waiting for Sepolia to confirm…", href });
+/** Where a transaction lives: its chain, a client that reads it, its explorer. */
+export interface TxNetwork {
+  name: string;
+  chain: Chain;
+  client: { waitForTransactionReceipt: typeof publicClient.waitForTransactionReceipt };
+  txUrl: (hash: string) => string;
+}
+
+export const SEPOLIA_NETWORK: TxNetwork = { name: "Sepolia", chain, client: publicClient, txUrl };
+
+export async function waitForTx(hash: `0x${string}`, label = "Transaction", network: TxNetwork = SEPOLIA_NETWORK) {
+  const href = network.txUrl(hash);
+  showToast({ id: hash, state: "pending", title: `${label} sent`, detail: `Waiting for ${network.name} to confirm…`, href });
   let receipt;
   try {
-    receipt = await publicClient.waitForTransactionReceipt({ hash });
+    receipt = await network.client.waitForTransactionReceipt({ hash });
   } catch (e) {
     showToast({ id: hash, state: "error", title: `${label}: no confirmation`, detail: "Check it on Etherscan.", href });
     throw e;
@@ -1383,6 +1401,8 @@ export interface ContractCall {
   abi: readonly unknown[];
   functionName: string;
   args: readonly unknown[];
+  /** Native value sent with the call — a CCIP fee, for instance. */
+  value?: bigint;
 }
 
 export const stakeCall = (market: Market, isYes: boolean, amount: bigint): ContractCall => ({
@@ -1415,8 +1435,8 @@ export const ammAddLiquidityCall = (
   args: [BigInt(market.id), amount, minLpSharesOut],
 });
 
-export const approveCall = (spender: Address, amount: bigint): ContractCall => ({
-  address: TOKEN_ADDRESS,
+export const approveCall = (spender: Address, amount: bigint, token: Address = TOKEN_ADDRESS): ContractCall => ({
+  address: token,
   abi: mockUsdcAbi,
   functionName: "approve",
   args: [spender, amount],

@@ -12,7 +12,7 @@ vi.mock("./chain", async (importOriginal) => {
   const real = await importOriginal<typeof import("./chain")>();
   return {
     ...real,
-    walletClientFor: () => ({
+    walletClientOn: () => ({
       writeContract: async (p: { functionName: string; args: readonly unknown[] }) => {
         sent.push({ functionName: p.functionName, args: p.args });
         return `0x${String(sent.length).padStart(64, "0")}`;
