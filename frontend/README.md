@@ -81,6 +81,17 @@ the chain through `api/rpc.ts`, a read-only proxy that keeps the provider key
 server-side in `RPC_UPSTREAM_URL`; locally, `VITE_RPC_URL` in `.env.local` goes
 to the node directly. Setup is in RUNBOOK under "Hosting the frontend".
 
+## Cross-chain tokens (CCIP)
+
+`src/lib/ccip.ts` holds both chains' CCIP routers and selectors and the
+exchange tokens' addresses on Base Sepolia, and builds `ccipSend` calls with the
+fee in native gas. `components/BridgeControls.tsx` is the portfolio column that
+uses it: Base balance, send either way, CCIP Explorer link. Base Sepolia is
+read straight from its public RPC (`https://sepolia.base.org`, which answers
+browser origins); Sepolia still goes through the paced queue.
+`writeWithApproval` and `waitForTx` take a token and a `TxNetwork`, so the same
+one-prompt approval works for a bridge from either side.
+
 ## Images
 
 Category and asset cover photos are in `public/img/`, from Pexels — credits in

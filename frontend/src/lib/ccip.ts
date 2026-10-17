@@ -56,12 +56,13 @@ export const CCIP_CHAINS: Record<CcipSide, { name: string; selector: bigint; rou
 };
 
 /**
- * The same tokens on Base Sepolia, by symbol. Null until deployed there: the
- * bridge controls hide themselves rather than offer a send that cannot arrive.
+ * The same tokens on Base Sepolia, by symbol, deployed 2026-10-17 with their
+ * BurnMintTokenPools (sXAU 0x409a…91E7, sCSPX 0x3b22…197B). A null here hides
+ * the bridge controls rather than offer a send that cannot arrive.
  */
 export const BASE_TOKENS: Record<string, Address | null> = {
-  sXAU: null,
-  sCSPX: null,
+  sXAU: "0xc20BFD974F374669cAC5994D1E712F03BC102242",
+  sCSPX: "0x95f4f643654cf63171eD5a8d6751752Ba43793CA",
 };
 
 export const tokenOn = (side: CcipSide, symbol: string): Address | null =>

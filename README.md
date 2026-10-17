@@ -42,6 +42,9 @@ priced by Chainlink Data Feeds. It is a different product with the same
 discipline: every order fills at the next *new* price the feed publishes, and a
 Chainlink DON fills orders on a schedule — see
 [An exchange must never trade at a known price](#an-exchange-must-never-trade-at-a-known-price).
+Its tokens are CCIP cross-chain tokens and move to **Base Sepolia** and back
+through **Chainlink CCIP** — see
+[The tokens cross chains, the reserve does not](#the-tokens-cross-chains-the-reserve-does-not).
 
 ---
 
@@ -88,8 +91,9 @@ Chainlink DON fills orders on a schedule — see
 | ReserveMarket | `0xa768Be2741A0464b81606649eCa45bfF7aD4d939` |
 | AmmMarket | `0xc9961096dc98eE17eD28bB417BB726F1b64f84FF` |
 | MockUSDC | `0xcd123a8d74ef062dddd2287e87bc88eb3b208b54` |
-| AssetExchange | `0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D` |
-| sXAU / sCSPX | `0xF08cC188Ed24d8dFDd62445cA88D84775aD792e1` / `0xA82D955E2e8B855aE83CBf10468772c4e1E1C64E` |
+| AssetExchange | `0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2` |
+| sXAU / sCSPX (CCIP tokens) | `0x502640827C31ce347FBe42a5bD6e08Dc98C4a9E0` / `0x2f42A5233311B1Ee291Bfd958039A0449E1F03CD` |
+| sXAU / sCSPX on **Base Sepolia** | `0xc20BFD974F374669cAC5994D1E712F03BC102242` / `0x95f4f643654cf63171eD5a8d6751752Ba43793CA` |
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
 
 **All five settle through a real DON** — ten nodes, the production
@@ -254,6 +258,28 @@ nothing else, and for each one the contract walks the feed from the order's own
 round to the first genuine change. Since that round is fixed by the order,
 *when* a fill happens cannot change *what* it pays — so filling is open to
 anyone, and the DON is a keeper rather than a party that could steer a price.
+
+### The tokens cross chains, the reserve does not
+
+The exchange's gold and S&P 500 ETF tokens are registered **CCIP cross-chain
+tokens** with a burn & mint pool on Ethereum Sepolia and on Base Sepolia.
+Sending one burns it on the source chain; the CCIP network attests the message
+and the destination pool mints the same amount. Supply across the two chains is
+constant, so nothing is ever claimed twice.
+
+What does not move is the reserve. A token on Base is a claim on the same
+exchange on Sepolia, priced by the same Data Feeds there, so selling means
+bringing it back first. That was a deliberate choice over a second exchange on
+Base: two reserves would each have to be solvent on their own, and a token
+would be worth a different thing depending on where it stood.
+
+It took a second exchange to get here. The first created its own tokens, with
+the exchange as their only authority — and CCIP registration needs an admin the
+token itself names, so they could never be registered. The tokens are now
+Chainlink's `CrossChainToken`, deployed on their own, with the exchange as one
+minter and burner and the CCIP pool as the other. The lane runs CCIP 2.0; the
+pools are the matching 2.0 `BurnMintTokenPool`. RUNBOOK has the addresses and
+the deploy sequence.
 
 ### Nobody presses the button, and the DON still cannot call it
 

@@ -206,11 +206,13 @@ forge verify-contract <address> src/File.sol:Contract --chain sepolia \
 
 `--guess-constructor-args` reads the arguments from the creation
 transaction, which works for anything the deployer created directly. A
-contract created BY another contract — the exchange's `SyntheticAsset`
-tokens — has no creation transaction of its own: pass `--constructor-args`
-instead (`cast abi-encode 'c(string,string)' "<name>" "<symbol>"`). Etherscan
-then matches identical bytecode by itself, which is why sCSPX reported
-"already verified" once sXAU was.
+contract created BY another contract — the first exchange's tokens were — has
+no creation transaction of its own: pass `--constructor-args` instead (`cast
+abi-encode …`). Etherscan then matches identical bytecode by itself, which is
+why the second of each identical pair reports "already verified". Chainlink's
+CCIP contracts verify from their npm path, e.g.
+`node_modules/@chainlink/contracts-ccip/contracts/pools/BurnMintTokenPool.sol:BurnMintTokenPool`;
+for Base Sepolia use `--chain base-sepolia` with the same key.
 
 ### Check it landed, before trusting it
 
@@ -1038,9 +1040,21 @@ the node rather than passing it through workflow memory as a string. Not done.
 
 ## The asset exchange (synthetic gold and the S&P 500 ETF)
 
-`AssetExchange` at `0x2118896e65C2Fd45bdd0febA889A19fCE9cec94D` sells synthetic
-tokens — `sXAU`, `sCSPX` — priced by Chainlink Data Feeds, against a reserve of
-mUSDC. It is not a market: nothing is settled, and `/live` does not scan it.
+`AssetExchange` at `0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2` sells synthetic
+tokens — `sXAU` `0x5026…a9E0`, `sCSPX` `0x2f42…03CD` — priced by Chainlink
+Data Feeds, against a reserve of mUSDC. It is not a market: nothing is
+settled, and `/live` does not scan it.
+
+**The tokens are CCIP cross-chain tokens** (Chainlink `CrossChainToken`), not
+something the exchange creates. The exchange holds their MINTER and BURNER
+roles; a CCIP pool holds them too, which is what lets them travel to Base
+Sepolia (next section). A sell burns against the seller's ALLOWANCE — the app
+approves and places in one wallet prompt where it can.
+
+This is the second exchange. The first, `0x2118…c94D` (2026-09-25), created
+its own tokens with the exchange as their only authority, which left nothing
+CCIP could register; it is no longer read by the app or filled by the DON, and
+its reserve stays where it is (no withdraw function; test money).
 
 **Every order fills at the first NEW price published after it.** New means a
 round whose price differs from the round before it, published strictly after
@@ -1100,11 +1114,72 @@ with `cancel(orderId)`: a buy returns its mUSDC in full, a sell re-mints its
 tokens. That covers a feed that stops and an aggregator upgrade, whose new phase
 restarts round numbering and is deliberately not searched.
 
-**Deploy** with `script/DeployExchange.s.sol` (`TOKEN`, `FORWARDER`,
-`WORKFLOW_NAME`, `WORKFLOW_AUTHOR`, optional `RESERVE`). It sets the author
-before the name, lists both feeds and seeds the reserve. Then put the address
-in `exchangeContractAddress` in the workflow config and in `EXCHANGE_ADDRESS`
-in `frontend/src/lib/config.ts`; `preflight.sh` checks both.
+**Deploy** with `script/DeployExchangeCcip.s.sol` — three scripts, the next
+section has the whole sequence. `DeployExchangeSepolia` (`TOKEN`, `FORWARDER`,
+`WORKFLOW_NAME`, `WORKFLOW_AUTHOR`, optional `RESERVE`) deploys both tokens,
+the exchange (author before name), grants it the token roles, lists both
+feeds, seeds the reserve, and deploys and registers each token's CCIP pool.
+Then put the address in `exchangeContractAddress` in the workflow config and
+in `EXCHANGE_ADDRESS` in `frontend/src/lib/config.ts`; `preflight.sh` checks
+both. The Chainlink contracts come from npm: `cd contracts && bun install`.
+
+## Moving tokens between chains (CCIP)
+
+The exchange's tokens travel between Ethereum Sepolia and Base Sepolia through
+Chainlink CCIP, as registered cross-chain tokens with a **burn & mint** pool on
+each side: sending burns on the source chain, and the DON-attested message mints
+the same amount on the destination. Supply across both chains is constant, and
+a token on Base is still a claim on the one reserve on Sepolia — selling means
+bringing it back first.
+
+| | Ethereum Sepolia | Base Sepolia |
+|---|---|---|
+| chain selector | `16015286601757825753` | `10344971235874465080` |
+| router | `0x0BF3dE8c…363A59` | `0xD3b06cEb…e88a93` |
+| sXAU | `0x502640827C31ce347FBe42a5bD6e08Dc98C4a9E0` | `0xc20BFD974F374669cAC5994D1E712F03BC102242` |
+| sXAU pool | `0xD21E8392ABD78FAce9dDA2eBE434416696EeDf41` | `0x409aa63AFf27386Df88B1a7d0adf0Ac1004491E7` |
+| sCSPX | `0x2f42A5233311B1Ee291Bfd958039A0449E1F03CD` | `0x95f4f643654cf63171eD5a8d6751752Ba43793CA` |
+| sCSPX pool | `0xEed56ea6Fd743a5f86CB3cE1D3DD100cA8456704` | `0x3b223093c3eeA05b17cc593EBC4bEDb890ee197B` |
+
+All verified on Etherscan / Basescan. The CCIP infrastructure addresses (router,
+RMN proxy, TokenAdminRegistry, RegistryModuleOwnerCustom) were read from
+Chainlink's directory data (`smartcontractkit/documentation`,
+`src/config/data/ccip/v1_2_0/testnet/`) and checked on chain with
+`typeAndVersion` and `isChainSupported` before use. **The lane runs CCIP 2.0**
+on/off-ramps, so the pools are `BurnMintTokenPool 2.0.0` from
+`@chainlink/contracts-ccip@2.0.0`, the version Chainlink's own CCT template
+(`smartcontractkit/docs-cct-foundry`) uses.
+
+**The sequence**, all in `script/DeployExchangeCcip.s.sol`:
+
+1. `DeployExchangeSepolia` on Sepolia — above.
+2. `DeployCcipRemote` on Base Sepolia — the two tokens (same names, symbols,
+   18 decimals) and their pools, registered the same way. Needs Base Sepolia
+   ETH on the deployer: about 0.0001 ETH for this, more for sending back.
+3. `ConnectPools` on EACH chain, with `REMOTE_SELECTOR`, the local pools and the
+   remote pools and tokens — `applyChainUpdates` with rate limits off.
+
+Registration is `registerAdminViaGetCCIPAdmin` → `acceptAdminRole` → `setPool`
+on each chain's registry; the deployer is the token's CCIP admin. Check it with
+`getTokenConfig(token)` on the TokenAdminRegistry (admin, pending admin, pool),
+and the lane with `isSupportedChain(remoteSelector)` / `getRemoteToken` on a
+pool. A `getFee` quote from the router for the token is the cheapest proof the
+whole configuration is accepted — it reverts for an unregistered token.
+
+**Fees** are paid in native gas: about 0.0002 ETH Sepolia → Base, 0.0006 ETH
+Base → Sepolia (quoted 2026-10-17). **Time**: CCIP waits for the source block to
+be final — about 20 minutes from Sepolia. Track a transfer on
+`https://ccip.chain.link/tx/<source tx hash>`.
+
+**In the app**: Portfolio → Tokenized assets → the "Cross-chain (CCIP)" column
+shows the Base Sepolia balance and sends either way; the wallet is switched to
+Base Sepolia (added if missing) for a send from there, and back afterwards.
+Approval and `ccipSend` go in one prompt where the wallet batches.
+
+**Deploying on Sepolia now costs real gas units**: the pool's creation alone
+estimated at 28.5M on the node (forge's local EVM says far less). A 30M gas
+limit was accepted, so the 16.7M per-transaction cap of earlier forks is not in
+force there; `--skip-simulation --slow` as for every Sepolia deploy.
 
 ## Automatic settlement requests (SettlementKeeper)
 
