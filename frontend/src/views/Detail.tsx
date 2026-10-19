@@ -274,18 +274,8 @@ export function Detail({
           {isPriceMarket(market) && <PriceChart market={market} />}
 
           {ladder && (
-            <div className="card" style={{ marginTop: "var(--space-4)" }}>
-              <div
-                className="muted"
-                style={{
-                  fontSize: 11,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.06em",
-                  marginBottom: "var(--space-2)",
-                }}
-              >
-                All strikes at this expiry
-              </div>
+            <div className="wallet">
+              <div className="eyebrow">All strikes at this expiry</div>
               <StrikeLadder event={ladder} selectedKey={market.key} onOpen={onOpenMarket} />
               <p className="muted-strong" style={{ fontSize: 11, margin: "var(--space-2) 0 0" }}>
                 Same question, same moment, different strike. Each rung is its own market — pick
@@ -295,11 +285,9 @@ export function Detail({
           )}
 
           {settlement && (
-            <div
-              className="card"
-              style={{ marginTop: "var(--space-4)", boxShadow: "var(--shadow-md)" }}
-            >
-              <div className="eyebrow">
+            <div className="wallet settle-card">
+              <div className="eyebrow settle-eyebrow">
+                <span className="settle-check" aria-hidden="true">✓</span>
                 <Term k="settlement">Settled by Chainlink CRE</Term>
               </div>
               {/*
@@ -319,7 +307,7 @@ export function Detail({
               <div className="muted" style={{ fontSize: 11 }}>
                 {settlement.forwarder ? attestationFor(settlement.forwarder) : ATTESTATION_LABEL}
               </div>
-              <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
+              <div className="detail-stats">
                 <Stat label="Outcome" value={outcomeLabel(settlement.outcome)} />
                 {market.categoryId === "flights" ? (
                   <>
@@ -347,12 +335,7 @@ export function Detail({
                   </>
                 )}
               </div>
-              <a
-                href={txUrl(settlement.txHash)}
-                target="_blank"
-                rel="noreferrer"
-                style={{ fontSize: 11, color: "var(--color-accent)" }}
-              >
+              <a className="btn settle-tx" href={txUrl(settlement.txHash)} target="_blank" rel="noreferrer">
                 Settlement transaction ↗
               </a>
               <div className="muted-strong" style={{ fontSize: 11, wordBreak: "break-all" }}>
@@ -361,33 +344,21 @@ export function Detail({
             </div>
           )}
 
-          <div
-            style={{
-              display: "flex",
-              gap: "var(--space-4)",
-              borderBottom: "1px solid var(--color-divider)",
-              margin: "var(--space-6) 0 var(--space-4)",
-            }}
-          >
+          <section className="wallet detail-tabs">
+          <div className="wallet-tabs" role="tablist">
             {(["overview", "activity", "rules"] as Tab[]).map((t) => (
               <button
                 key={t}
+                role="tab"
+                aria-selected={tab === t}
+                className={tab === t ? "active" : ""}
                 onClick={() => setTab(t)}
-                style={{
-                  cursor: "pointer",
-                  background: "transparent",
-                  border: "none",
-                  fontFamily: "var(--font-heading)",
-                  fontWeight: "var(--font-heading-weight)" as never,
-                  fontSize: 14,
-                  padding: "8px 0",
-                  textTransform: "capitalize",
-                  color: tab === t ? "var(--color-accent)" : "var(--color-text)",
-                  opacity: tab === t ? 1 : 0.7,
-                  borderBottom: `2px solid ${tab === t ? "var(--color-accent)" : "transparent"}`,
-                }}
+                style={{ textTransform: "capitalize" }}
               >
                 {t}
+                {t === "activity" && marketStakes.length > 0 && (
+                  <span className="muted-strong" style={{ fontSize: 12 }}>{marketStakes.length}</span>
+                )}
               </button>
             ))}
           </div>
@@ -411,14 +382,7 @@ export function Detail({
                   </>
                 )}
               </p>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "var(--space-8)",
-                  marginTop: "var(--space-4)",
-                  flexWrap: "wrap",
-                }}
-              >
+              <div className="detail-stats" style={{ marginTop: "var(--space-4)" }}>
                 <Stat label="Pool" value={formatToken(totalPool(market))} />
                 <Stat label="Backers" value={String(backers)} />
                 {market.categoryId === "amm" && (
@@ -449,51 +413,40 @@ export function Detail({
                   No stakes on this market yet.
                 </p>
               ) : (
-                marketStakes.map((e) => (
-                  <div
-                    key={`${e.txHash}-${e.user}-${e.amount}`}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "var(--space-2) 0",
-                      borderBottom: "1px solid var(--color-divider)",
-                      fontSize: 13,
-                    }}
-                  >
-                    <a
-                      href={addressUrl(e.user)}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ textDecoration: "none" }}
-                    >
-                      {shortAddress(e.user)}
-                    </a>
-                    <span className="muted">
-                      {/* An AMM trade is a purchase at a price, and can run in
-                          reverse — calling a sell a "stake" would describe the
-                          opposite of what happened. */}
-                      {e.amm
-                        ? `${e.amm.direction === "buy" ? "bought" : "sold"} ${formatToken(
-                            e.amm.shares,
-                            // Shares are not currency — they are claims that
-                            // pay one unit each if right. Labelling them mUSDC
-                            // states a figure roughly twice the money involved.
-                            { symbol: false },
-                          )} ${e.isYes ? "Yes" : "No"} shares`
-                        : `staked ${e.isYes ? "Yes" : "No"}`}
-                    </span>
-                    <a
-                      href={txUrl(e.txHash)}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={{ textDecoration: "none" }}
-                    >
-                      {e.amm?.direction === "sell" ? "+" : ""}
-                      {formatToken(e.amount)}
-                    </a>
-                  </div>
-                ))
+                <ul className="wallet-list">
+                  {marketStakes.map((e) => (
+                    <li key={`${e.txHash}-${e.user}-${e.amount}`} className="wallet-row activity-row">
+                      <span className={`activity-side ${e.isYes ? "yes" : "no"}`} aria-hidden="true">
+                        {e.isYes ? "Y" : "N"}
+                      </span>
+                      <div className="wallet-row-main">
+                        <a className="wallet-row-name" href={addressUrl(e.user)} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                          {shortAddress(e.user)}
+                        </a>
+                        <div className="wallet-row-chains">
+                          <span className="muted">
+                            {/* An AMM trade is a purchase at a price, and can run in
+                                reverse — calling a sell a "stake" would describe the
+                                opposite of what happened. */}
+                            {e.amm
+                              ? `${e.amm.direction === "buy" ? "bought" : "sold"} ${formatToken(
+                                  e.amm.shares,
+                                  // Shares are not currency — they are claims that
+                                  // pay one unit each if right. Labelling them mUSDC
+                                  // states a figure roughly twice the money involved.
+                                  { symbol: false },
+                                )} ${e.isYes ? "Yes" : "No"} shares`
+                              : `staked ${e.isYes ? "Yes" : "No"}`}
+                          </span>
+                        </div>
+                      </div>
+                      <a className="wallet-row-value" href={txUrl(e.txHash)} target="_blank" rel="noreferrer" style={{ textDecoration: "none", color: "inherit" }}>
+                        {e.amm?.direction === "sell" ? "+" : ""}
+                        {formatToken(e.amount)}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
           )}
@@ -566,6 +519,7 @@ export function Detail({
               )}
             </div>
           )}
+          </section>
         </div>
 
         {/* One sticky column, not two sticky panels: each panel stuck at the

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Address } from "viem";
+import { formatUnits, type Address } from "viem";
 import { txLabel } from "../lib/toasts";
-import { TOKEN_SYMBOL, txUrl } from "../lib/config";
+import { TOKEN_DECIMALS, TOKEN_SYMBOL, txUrl } from "../lib/config";
 import { formatToken, parseToken, statusLabel } from "../lib/format";
 import {
   estimatePayout,
@@ -200,7 +200,7 @@ export function TradePanel({
 
   if (!account) {
     return (
-      <aside className="trade-panel">
+      <aside className="trade-panel market-panel">
         <div className="eyebrow">Trade</div>
         <p className="muted" style={{ fontSize: 13, margin: 0 }}>
           Connect a wallet on Sepolia to stake on this market.
@@ -213,7 +213,7 @@ export function TradePanel({
   }
 
   return (
-    <aside className="trade-panel">
+    <aside className="trade-panel market-panel">
       <div className="eyebrow">Trade</div>
 
       {open ? (
@@ -243,63 +243,41 @@ export function TradePanel({
             </div>
           )}
 
-          <div className="seg" style={{ width: "100%" }}>
-            <button
-              className={side === "yes" ? "active" : ""}
-              style={{ flex: 1 }}
-              onClick={() => setSide("yes")}
-            >
-              Yes {yes === null ? "—" : `${yes.toFixed(0)}%`}
+          <div className="side-pick">
+            <button className={`yes${side === "yes" ? " active" : ""}`} onClick={() => setSide("yes")}>
+              <span>Yes</span>
+              <b>{yes === null ? "—" : `${yes.toFixed(0)}%`}</b>
             </button>
-            <button
-              className={side === "no" ? "active" : ""}
-              style={{ flex: 1 }}
-              onClick={() => setSide("no")}
-            >
-              No {yes === null ? "—" : `${(100 - yes).toFixed(0)}%`}
+            <button className={`no${side === "no" ? " active" : ""}`} onClick={() => setSide("no")}>
+              <span>No</span>
+              <b>{yes === null ? "—" : `${(100 - yes).toFixed(0)}%`}</b>
             </button>
           </div>
 
           <div>
-            <label
-              style={{
-                display: "block",
-                fontSize: 12,
-                marginBottom: 5,
-                color: "color-mix(in srgb, var(--color-text) 70%, transparent)",
-              }}
-            >
-              {isAmm && mode === "sell" ? "Shares to sell" : `Amount (${TOKEN_SYMBOL})`}
-            </label>
-            <input
-              type="text"
-              inputMode="decimal"
-              value={amountText}
-              onChange={(e) => setAmountText(e.target.value)}
-              placeholder="0.00"
-            />
-            <div
-              className="muted-strong"
-              style={{ fontSize: 11, marginTop: 4, display: "flex", justifyContent: "space-between" }}
-            >
+            <div className={`bridge-amount${(isAmm && mode === "sell" ? amount !== null && amount > heldShares : insufficient) ? " invalid" : ""}`}>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={amountText}
+                onChange={(e) => setAmountText(e.target.value.replace(",", "."))}
+                placeholder="0.00"
+                aria-label={isAmm && mode === "sell" ? "Shares to sell" : `Amount in ${TOKEN_SYMBOL}`}
+              />
+              <span className="bridge-amount-symbol">
+                {isAmm && mode === "sell" ? `${side === "yes" ? "Yes" : "No"} shares` : TOKEN_SYMBOL}
+              </span>
+            </div>
+            <div className="trade-balance muted">
               <span>
                 {isAmm && mode === "sell"
-                  ? `Holding ${formatToken(heldShares, { symbol: false })} ${
-                      side === "yes" ? "Yes" : "No"
-                    } shares`
+                  ? `Holding ${formatToken(heldShares, { symbol: false })} ${side === "yes" ? "Yes" : "No"} shares`
                   : `Balance ${formatToken(balance)}`}
               </span>
               <button
+                className="linklike"
                 onClick={() => void run("minting", (a) => sendMint(a, 100_000_000n))}
                 disabled={busy !== null}
-                style={{
-                  background: "none",
-                  border: "none",
-                  padding: 0,
-                  cursor: "pointer",
-                  color: "var(--color-accent)",
-                  fontSize: 11,
-                }}
                 title="MockUSDC has an open mint for testing"
               >
                 {busy === "minting" ? "Minting…" : "Get 100 test tokens"}
@@ -307,74 +285,87 @@ export function TradePanel({
             </div>
           </div>
 
-          {isAmm ? (
-            <>
-              <div
-                className="muted-strong"
-                style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}
+          <div className="bridge-shares">
+            {isAmm && mode === "sell"
+              ? ([25, 50, 100] as const).map((p) => (
+                  <button
+                    key={p}
+                    className="pill"
+                    disabled={heldShares === 0n}
+                    onClick={() => setAmountText(formatUnits((heldShares * BigInt(p)) / 100n, TOKEN_DECIMALS))}
+                  >
+                    {p === 100 ? "Max" : `${p}%`}
+                  </button>
+                ))
+              : ([1, 10, 50] as const).map((n) => (
+                  <button
+                    key={n}
+                    className="pill"
+                    onClick={() => setAmountText(String((Number(amountText) || 0) + n))}
+                  >
+                    +{n}
+                  </button>
+                ))}
+            {!(isAmm && mode === "sell") && (
+              <button
+                className="pill"
+                disabled={balance === 0n}
+                onClick={() => setAmountText(formatUnits(balance, TOKEN_DECIMALS))}
               >
-                <span>{mode === "buy" ? "Shares" : "You receive"}</span>
-                <span style={{ color: "var(--color-text)" }}>
-                  {quotedShares === null
-                    ? "—"
-                    : // Buying returns SHARES, selling returns money. Only one
-                      // of the two is denominated in the token.
-                      formatToken(quotedShares, { symbol: mode === "sell" })}
-                </span>
-              </div>
-              <div
-                className="muted-strong"
-                style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}
-              >
-                <span>Price per share</span>
-                <span style={{ color: "var(--color-text)" }}>
-                  {quotedShares && quotedShares > 0n && amount
-                    ? mode === "buy"
-                      ? `${(Number((amount * 10_000n) / quotedShares) / 100).toFixed(1)}¢`
-                      : `${(Number((quotedShares * 10_000n) / amount) / 100).toFixed(1)}¢`
-                    : "—"}
-                </span>
-              </div>
-              {/*
-                * Shown as its own line rather than folded into the price. The
-                * fee is not the market maker's margin on a spread — it is paid
-                * to whoever provided the liquidity, and a trader is entitled to
-                * see the size of it before agreeing.
-                */}
-              {market.categoryId === "amm" && market.feeBps > 0 && (
-                <div
-                  className="muted-strong"
-                  style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}
-                >
-                  <span>Pool fee ({(market.feeBps / 100).toFixed(2)}%)</span>
-                  <span style={{ color: "var(--color-text)" }}>
-                    {quotedFee === null ? "—" : formatToken(quotedFee, { symbol: true })}
-                  </span>
+                Max
+              </button>
+            )}
+          </div>
+
+          <dl className="bridge-facts">
+            {isAmm ? (
+              <>
+                <div>
+                  <dt>{mode === "buy" ? "Shares" : "You receive"}</dt>
+                  <dd>
+                    {quotedShares === null
+                      ? "—"
+                      : // Buying returns SHARES, selling returns money. Only one
+                        // of the two is denominated in the token.
+                        formatToken(quotedShares, { symbol: mode === "sell" })}
+                  </dd>
                 </div>
-              )}
-              {mode === "buy" && (
-                <div
-                  className="muted-strong"
-                  style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}
-                >
-                  <span>Payout if {side === "yes" ? "Yes" : "No"}</span>
-                  <span style={{ color: "var(--color-text)" }}>
-                    {quotedShares === null ? "—" : formatToken(quotedShares)}
-                  </span>
+                <div>
+                  <dt>Price per share</dt>
+                  <dd>
+                    {quotedShares && quotedShares > 0n && amount
+                      ? mode === "buy"
+                        ? `${(Number((amount * 10_000n) / quotedShares) / 100).toFixed(1)}¢`
+                        : `${(Number((quotedShares * 10_000n) / amount) / 100).toFixed(1)}¢`
+                      : "—"}
+                  </dd>
                 </div>
-              )}
-            </>
-          ) : (
-            <div
-              className="muted-strong"
-              style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}
-            >
-              <span>Est. payout if {side === "yes" ? "Yes" : "No"}</span>
-              <span style={{ color: "var(--color-text)" }}>
-                {estimate ? formatToken(estimate.payout) : "—"}
-              </span>
-            </div>
-          )}
+                {/*
+                  * Shown as its own line rather than folded into the price. The
+                  * fee is not the market maker's margin on a spread — it is paid
+                  * to whoever provided the liquidity, and a trader is entitled to
+                  * see the size of it before agreeing.
+                  */}
+                {market.categoryId === "amm" && market.feeBps > 0 && (
+                  <div>
+                    <dt>Pool fee ({(market.feeBps / 100).toFixed(2)}%)</dt>
+                    <dd>{quotedFee === null ? "—" : formatToken(quotedFee, { symbol: true })}</dd>
+                  </div>
+                )}
+                {mode === "buy" && (
+                  <div className="payout">
+                    <dt>Payout if {side === "yes" ? "Yes" : "No"}</dt>
+                    <dd>{quotedShares === null ? "—" : formatToken(quotedShares)}</dd>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="payout">
+                <dt>Est. payout if {side === "yes" ? "Yes" : "No"}</dt>
+                <dd>{estimate ? formatToken(estimate.payout) : "—"}</dd>
+              </div>
+            )}
+          </dl>
 
           {estimate?.refundOnly && (
             <div style={{ fontSize: 11, color: "var(--color-accent-300)" }}>
@@ -406,8 +397,7 @@ export function TradePanel({
           )}
 
           <button
-            className="btn btn-accent"
-            style={{ width: "100%" }}
+            className="btn btn-accent bridge-submit"
             disabled={
               !amount ||
               amount <= 0n ||
@@ -497,10 +487,12 @@ export function TradePanel({
       )}
 
       {position && (
-        <div className="muted-strong" style={{ fontSize: 11, borderTop: "1px solid var(--color-divider)", paddingTop: "var(--space-2)" }}>
-          {isAmm ? "Your shares" : "Your stake"}:{" "}
-          {formatToken(position.yes, { symbol: !isAmm })} Yes ·{" "}
-          {formatToken(position.no, { symbol: !isAmm })} No
+        <div className="market-position">
+          <span className="muted">{isAmm ? "Your shares" : "Your stake"}</span>
+          <span>
+            <b className="up">{formatToken(position.yes, { symbol: !isAmm })}</b> Yes ·{" "}
+            <b>{formatToken(position.no, { symbol: !isAmm })}</b> No
+          </span>
         </div>
       )}
 

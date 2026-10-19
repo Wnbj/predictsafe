@@ -6,6 +6,7 @@ import { MarketCard } from "../components/MarketCard";
 import { groupIntoEvents, isLadder } from "../lib/events";
 import { MarketStatus } from "../lib/types";
 import { CreateMarket } from "../components/CreateMarket";
+import { formatToken } from "../lib/format";
 import type { WalletState } from "../hooks/useWallet";
 
 type SortMode = "backed" | "newest" | "closing";
@@ -93,43 +94,100 @@ export function Markets({
 
   const activeCount = useMemo(() => inCategory.filter(isActive).length, [inCategory]);
 
+  const pooled = inCategory.reduce((sum, m) => sum + totalPool(m), 0n);
+  const visible = (c: CategoryId) =>
+    markets.filter((m) => m.categoryId === c && (showRehearsals || !isUnstakedAndResolved(m))).length;
+
   return (
     <div className="page">
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          gap: "var(--space-3)",
-          flexWrap: "wrap",
-        }}
-      >
-        <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-2)" }}>
-          Markets
-        </h2>
-        {!creating && (
-          <button className="btn btn-accent" onClick={() => setCreating(true)}>
-            + Create market
+      <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-6)" }}>
+        Markets
+      </h2>
+
+      <section className="wallet markets-head" aria-label="Filter markets">
+        <div className="wallet-head">
+          <div>
+            <div className="eyebrow">Prediction markets · settled by Chainlink CRE</div>
+            <div className="wallet-total">
+              {filtered.length} market{filtered.length === 1 ? "" : "s"}
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              {rehearsalCount > 0 ? (
+                <button type="button" className="linklike" onClick={() => setShowRehearsals((v) => !v)}>
+                  {showRehearsals
+                    ? `hide ${rehearsalCount} test market${rehearsalCount === 1 ? "" : "s"}`
+                    : `${rehearsalCount} test market${rehearsalCount === 1 ? "" : "s"} hidden`}
+                </button>
+              ) : (
+                "every market on chain"
+              )}
+            </div>
+          </div>
+          <div className="markets-head-side">
+            <div className="positions-stats">
+              <div className={activeCount > 0 ? "accent" : undefined}>
+                <span>Active</span>
+                <b>{activeCount}</b>
+              </div>
+              <div>
+                <span>In pools</span>
+                <b>{formatToken(pooled)}</b>
+              </div>
+            </div>
+            {!creating && (
+              <button className="btn btn-accent bridge-submit markets-create" onClick={() => setCreating(true)}>
+                + Create market
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="wallet-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={categoryFilter === "all"}
+            className={categoryFilter === "all" ? "active" : ""}
+            onClick={() => onCategoryFilter("all")}
+          >
+            All
           </button>
-        )}
-      </div>
-      <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
-        {filtered.length} market{filtered.length === 1 ? "" : "s"} · {activeCount} active
-        {rehearsalCount > 0 && (
-          <>
-            {" · "}
+          {CATEGORIES.map((c) => (
             <button
-              type="button"
-              className="linklike"
-              onClick={() => setShowRehearsals((v) => !v)}
+              key={c.id}
+              role="tab"
+              aria-selected={categoryFilter === c.id}
+              className={categoryFilter === c.id ? "active" : ""}
+              onClick={() => onCategoryFilter(c.id)}
+              disabled={!c.live}
+              title={c.live ? c.blurb : "Coming soon"}
             >
-              {showRehearsals
-                ? `hide ${rehearsalCount} test market${rehearsalCount === 1 ? "" : "s"}`
-                : `${rehearsalCount} test market${rehearsalCount === 1 ? "" : "s"} hidden`}
+              {c.name}
+              {c.live ? (
+                <span className="muted-strong" style={{ fontSize: 12 }}>{visible(c.id)}</span>
+              ) : (
+                <span className="muted-strong" style={{ fontSize: 10 }}>soon</span>
+              )}
             </button>
-          </>
-        )}
-      </p>
+          ))}
+        </div>
+
+        <div className="markets-sorts">
+          <div className="seg">
+            {STATUSES.map((s) => (
+              <button key={s.key} className={status === s.key ? "active" : ""} onClick={() => setStatus(s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+          <div className="seg">
+            {SORTS.map((s) => (
+              <button key={s.key} className={sort === s.key ? "active" : ""} onClick={() => setSort(s.key)}>
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {creating && (
         <CreateMarket
@@ -141,63 +199,6 @@ export function Markets({
           }}
         />
       )}
-
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "var(--space-6)",
-          flexWrap: "wrap",
-          gap: "var(--space-3)",
-        }}
-      >
-        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-          <button
-            className={`pill${categoryFilter === "all" ? " active" : ""}`}
-            onClick={() => onCategoryFilter("all")}
-          >
-            All
-          </button>
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.id}
-              className={`pill${categoryFilter === c.id ? " active" : ""}`}
-              onClick={() => onCategoryFilter(c.id)}
-              disabled={!c.live}
-              title={c.live ? c.blurb : "Coming soon"}
-            >
-              {c.name}
-              {!c.live && " ·"}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
-        <div className="seg">
-          {STATUSES.map((s) => (
-            <button
-              key={s.key}
-              className={status === s.key ? "active" : ""}
-              onClick={() => setStatus(s.key)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <div className="seg">
-          {SORTS.map((s) => (
-            <button
-              key={s.key}
-              className={sort === s.key ? "active" : ""}
-              onClick={() => setSort(s.key)}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-        </div>
-      </div>
 
       {filtered.length === 0 ? (
         <div className="card" style={{ maxWidth: 520 }}>

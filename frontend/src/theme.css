@@ -1461,3 +1461,494 @@ input:focus {
     font-size: 17px;
   }
 }
+
+/* ---- leaderboard -------------------------------------------------------- */
+
+.board {
+  max-width: 900px;
+}
+.up {
+  color: var(--color-accent-300);
+}
+.down {
+  color: var(--color-negative);
+}
+.board-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-surface) 70%, transparent);
+}
+.podium {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: 12px;
+  margin: 4px 0 6px;
+}
+.podium-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 16px 10px 14px;
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-md) var(--radius-md);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 14%, transparent), color-mix(in srgb, var(--color-bg) 50%, transparent));
+  color: var(--color-text);
+  text-decoration: none;
+  font-size: 13px;
+  text-align: center;
+  min-width: 0;
+  transition: transform 0.15s ease;
+}
+.podium-step:hover {
+  transform: translateY(-2px);
+}
+.podium-step b {
+  font-weight: 500;
+  font-size: 14px;
+}
+.podium-step.place-1 {
+  padding-top: 26px;
+  padding-bottom: 26px;
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 26%, transparent), color-mix(in srgb, var(--color-bg) 50%, transparent));
+}
+.podium-step.you b {
+  color: var(--color-accent-300);
+}
+.podium-step.empty {
+  visibility: hidden;
+}
+.podium-medal {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-bg);
+  background: var(--color-neutral-400);
+}
+.place-1 .podium-medal {
+  background: #e8c98c;
+}
+.place-3 .podium-medal {
+  background: #c9a184;
+}
+.board-row .wallet-row-value .muted {
+  font-size: 12px;
+}
+.board-row.you {
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.board-rank {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-neutral-900);
+  color: var(--color-neutral-300);
+  font-size: 13px;
+  font-weight: 600;
+}
+.board-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.board-rate {
+  display: inline-block;
+  width: 70px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-neutral-800);
+  overflow: hidden;
+}
+.board-rate > span {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+}
+@media (max-width: 720px) {
+  .board-rank {
+    grid-area: icon;
+  }
+  .podium {
+    gap: 6px;
+  }
+  .podium-step {
+    padding: 12px 4px 10px;
+    font-size: 11px;
+  }
+  .podium-step b {
+    font-size: 12px;
+  }
+}
+
+/* ---- live settlement pipeline ------------------------------------------- */
+
+.live-page .wallet {
+  max-width: 1000px;
+  margin: 0 0 var(--space-6);
+}
+.live-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-neutral-500);
+}
+.live-dot.on {
+  background: #9fd8b5;
+  animation: live-pulse 2s ease-out infinite;
+}
+@keyframes live-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, #9fd8b5 60%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.positions-stats .negative {
+  box-shadow: 0 0 0 1px var(--color-negative);
+}
+.positions-stats .negative b {
+  color: var(--color-negative);
+}
+.live-failures {
+  color: var(--color-negative);
+  font-size: 13px;
+}
+.live-idle {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 2px;
+}
+.live-idle-ring {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px dashed color-mix(in srgb, var(--color-accent) 45%, transparent);
+  animation: toast-spin 12s linear infinite;
+}
+.live-list-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+.wallet-row.refused {
+  box-shadow: inset 2px 0 0 var(--color-negative);
+}
+.wallet-status .spinner {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border-width: 1.5px;
+}
+
+.attempt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+.attempt.refused {
+  box-shadow: inset 0 0 0 1px var(--color-negative);
+}
+.attempt-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.stage {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+}
+/* The line joining one stage's dot to the next. */
+.stage:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 30px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--color-neutral-800);
+}
+.stage.done:not(:last-child)::before {
+  background: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.stage-n {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1.5px solid var(--color-neutral-700);
+  color: var(--color-neutral-500);
+  background: var(--color-surface);
+  z-index: 1;
+}
+.stage.done .stage-n {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+.stage.negative .stage-n {
+  border-color: var(--color-negative);
+  color: var(--color-negative);
+}
+.stage-title {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-neutral-400);
+}
+.stage.muted-stage > div:last-child {
+  opacity: 0.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dot.on,
+  .live-idle-ring { animation: none; }
+}
+.wallet-row-chains a {
+  text-decoration: none;
+}
+.wallet-row-chains a:hover {
+  color: var(--color-text);
+}
+
+/* ---- market detail: the side panels in the wallet's style --------------- */
+
+.trade-panel {
+  padding: 18px;
+  gap: 12px;
+  background:
+    radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--color-section-glow) 50%, transparent) 0%, transparent 60%),
+    var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.side-pick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.side-pick button {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 11px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-divider);
+  background: var(--color-neutral-900);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.side-pick b {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.side-pick .yes.active {
+  border-color: #9fd8b5;
+  background: color-mix(in srgb, #9fd8b5 14%, transparent);
+}
+.side-pick .yes.active b {
+  color: #9fd8b5;
+}
+.side-pick .no.active {
+  border-color: var(--color-negative);
+  background: color-mix(in srgb, var(--color-negative) 12%, transparent);
+}
+.side-pick .no.active b {
+  color: var(--color-negative);
+}
+.bridge-facts .payout dd {
+  color: var(--color-accent-300);
+  font-weight: 600;
+}
+.market-position {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg) 50%, transparent);
+  font-size: 13px;
+}
+.market-position b {
+  font-weight: 600;
+}
+
+/* ---- market detail: the left column ------------------------------------- */
+
+.detail-grid .wallet {
+  max-width: none;
+  margin: var(--space-4) 0 0;
+}
+.detail-grid > :first-child > .wallet:first-child {
+  margin-top: 0;
+}
+.detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+.detail-stats > div {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg) 55%, transparent);
+}
+.detail-stats .heading {
+  font-size: 15px !important;
+}
+.settle-card {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #9fd8b5 35%, transparent);
+}
+.settle-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #9fd8b5;
+}
+.settle-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #9fd8b5;
+  color: var(--color-bg);
+  font-size: 10px;
+  font-weight: 700;
+}
+.settle-tx {
+  align-self: flex-start;
+  padding: 5px 10px;
+  font-size: 12px;
+  text-decoration: none;
+}
+.detail-tabs .wallet-tabs {
+  margin-bottom: 4px;
+}
+.activity-row {
+  grid-template-columns: 32px 1fr auto;
+}
+.activity-side {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+.activity-side.yes {
+  color: #9fd8b5;
+  background: color-mix(in srgb, #9fd8b5 15%, transparent);
+}
+.activity-side.no {
+  color: var(--color-negative);
+  background: color-mix(in srgb, var(--color-negative) 13%, transparent);
+}
+@media (max-width: 720px) {
+  .activity-row {
+    grid-template-columns: 30px 1fr auto;
+    grid-template-areas: "icon name value" "icon chains chains";
+  }
+  .activity-side {
+    grid-area: icon;
+  }
+}
+
+/* ---- markets board header ------------------------------------------------ */
+
+.markets-head {
+  max-width: 1300px;
+  margin-top: 0;
+}
+.markets-head-side {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.markets-create {
+  padding: 8px 16px;
+  font-size: 14px;
+}
+.markets-sorts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.wallet-tabs button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* Cards people click share the wallet's rounder corners. */
+.card-interactive {
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* ---- landing figures ----------------------------------------------------- */
+
+.landing-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  max-width: 1200px;
+  margin: 0;
+}
+.landing-stats > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg) 50%, transparent);
+}
+.landing-stats b {
+  font-family: var(--font-heading);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.landing-stats span {
+  font-size: 12px;
+  color: var(--color-accent-2-300);
+}
+@media (max-width: 720px) {
+  .landing-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .landing-stats b {
+    font-size: 22px;
+  }
+}

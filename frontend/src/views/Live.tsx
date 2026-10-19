@@ -17,7 +17,6 @@ import { isUnstakedAndResolved } from "../lib/pricing";
 import { useNow } from "../hooks/useNow";
 import { useState } from "react";
 import { history, inFlight, type Attempt, type PipelineState } from "../lib/pipeline";
-import { SummaryCard } from "../components/SummaryCard";
 import { Outcome, type LpEvent, type Market } from "../lib/types";
 import { useSettlementFeed } from "../hooks/useSettlementFeed";
 
@@ -48,6 +47,7 @@ export function Live({
   // rehearsal. Its settlement is real, but a table of near-identical test runs
   // buries the ones that paid anyone. Counted, and one click away.
   const [showRehearsals, setShowRehearsals] = useState(false);
+  const [shown, setShown] = useState(12);
   const allDone = history(feed);
   const rehearsals = allDone.filter((a) => a.market !== null && isUnstakedAndResolved(a.market)).length;
   const done = showRehearsals
@@ -68,7 +68,7 @@ export function Live({
   ).length;
 
   return (
-    <div className="page">
+    <div className="page live-page">
       <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-2)" }}>
         Settlement pipeline
       </h2>
@@ -78,33 +78,39 @@ export function Live({
         report was delivered and accepted; it does not re-check the price the workflow saw.
       </p>
 
-      <div className="grid-4" style={{ maxWidth: 1100, marginBottom: "var(--space-6)" }}>
-        <SummaryCard label="Watching" value={feed.head > 0n ? `#${feed.head}` : "—"} accent>
-          <div className="muted" style={{ fontSize: 11 }}>
-            {feed.lastPollAt
-              ? `last read ${formatTimestamp(Math.floor(feed.lastPollAt / 1000))}`
-              : "connecting…"}
+      <section className="wallet live-head" aria-label="Pipeline status">
+        <div className="wallet-head">
+          <div>
+            <div className="eyebrow live-eyebrow">
+              <span className={`live-dot${feed.lastPollAt ? " on" : ""}`} aria-hidden="true" />
+              Watching Sepolia
+            </div>
+            <div className="wallet-total">{feed.head > 0n ? `#${feed.head.toLocaleString()}` : "…"}</div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              {feed.lastPollAt
+                ? `latest block · read ${formatTimestamp(Math.floor(feed.lastPollAt / 1000))}`
+                : "connecting…"}
+            </div>
           </div>
-        </SummaryCard>
-        <SummaryCard label="In flight" value={String(waiting.length)} />
-        <SummaryCard label="Settled" value={String(settledCount)} />
-        <SummaryCard
-          label="Refused"
-          value={String(rejected)}
-          color={rejected > 0 ? "var(--color-negative)" : undefined}
-        />
-      </div>
+          <div className="positions-stats">
+            <div className={waiting.length > 0 ? "accent" : undefined}>
+              <span>In flight</span>
+              <b>{waiting.length}</b>
+            </div>
+            <div>
+              <span>Settled</span>
+              <b>{settledCount}</b>
+            </div>
+            <div className={rejected > 0 ? "negative" : undefined}>
+              <span>Refused</span>
+              <b>{rejected}</b>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {feed.failures.length > 0 && (
-        <div
-          className="card"
-          style={{
-            maxWidth: 820,
-            marginBottom: "var(--space-6)",
-            color: "var(--color-negative)",
-            fontSize: 13,
-          }}
-        >
+        <div className="wallet live-failures">
           {feed.failures.map((f) => (
             <div key={f.family}>
               <strong>{f.family}</strong> logs could not be read — that part of every pipeline
@@ -114,19 +120,18 @@ export function Live({
         </div>
       )}
 
-      <section style={{ marginBottom: "var(--space-8)" }}>
-        <div className="eyebrow" style={{ marginBottom: "var(--space-3)" }}>
-          In flight
-        </div>
+      <section className="wallet" aria-label="In flight">
+        <div className="eyebrow">In flight</div>
         {waiting.length === 0 ? (
-          <div className="card" style={{ maxWidth: 520 }}>
-            <div className="heading" style={{ fontSize: 17 }}>
-              Nothing being settled right now
-            </div>
-            <div className="muted" style={{ fontSize: 13 }}>
-              {feed.loading
-                ? "Reading the chain…"
-                : "Request a settlement and this fills in by itself."}
+          <div className="live-idle">
+            <span className="live-idle-ring" aria-hidden="true" />
+            <div>
+              <div style={{ fontWeight: 500 }}>Nothing being settled right now</div>
+              <div className="muted" style={{ fontSize: 13 }}>
+                {feed.loading
+                  ? "Reading the chain…"
+                  : "Request a settlement — or wait for the keeper — and this fills in by itself."}
+              </div>
             </div>
           </div>
         ) : (
@@ -135,54 +140,34 @@ export function Live({
       </section>
 
       {done.length > 0 && (
-        <section style={{ marginBottom: "var(--space-8)" }}>
-          <div className="eyebrow" style={{ marginBottom: "var(--space-3)" }}>
-            Settled to date
+        <section className="wallet" aria-label="Settled to date">
+          <div className="live-list-head">
+            <div className="eyebrow">Settled to date · {done.length}</div>
             {rehearsals > 0 && (
-              <>
-                {" · "}
-                <button
-                  type="button"
-                  className="linklike"
-                  style={{ textTransform: "none", letterSpacing: 0 }}
-                  onClick={() => setShowRehearsals((v) => !v)}
-                >
-                  {showRehearsals
-                    ? `hide ${rehearsals} test run${rehearsals === 1 ? "" : "s"}`
-                    : `${rehearsals} test run${rehearsals === 1 ? "" : "s"} hidden`}
-                </button>
-              </>
+              <button type="button" className="linklike muted" style={{ fontSize: 12 }} onClick={() => setShowRehearsals((v) => !v)}>
+                {showRehearsals
+                  ? `hide ${rehearsals} test run${rehearsals === 1 ? "" : "s"}`
+                  : `${rehearsals} test run${rehearsals === 1 ? "" : "s"} hidden`}
+              </button>
             )}
           </div>
-          <div className="table-scroll">
-            <table className="data stack-on-mobile" style={{ maxWidth: 1200 }}>
-              <thead>
-                <tr>
-                  <th>Market</th>
-                  <th>Requested</th>
-                  <th>Report</th>
-                  <th>Outcome</th>
-                  <th>Observed</th>
-                  <th>Gap</th>
-                  <th>Payouts</th>
-                </tr>
-              </thead>
-              <tbody>
-                {done.map((a) => (
-                  <HistoryRow key={a.id} attempt={a} times={feed.blockTimes} now={now} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="wallet-list">
+            {done.slice(0, shown).map((a) => (
+              <HistoryRow key={a.id} attempt={a} times={feed.blockTimes} now={now} />
+            ))}
+          </ul>
+          {done.length > shown && (
+            <button className="btn positions-more" onClick={() => setShown(done.length)}>
+              Show all {done.length}
+            </button>
+          )}
         </section>
       )}
 
       {feed.unattributed.length > 0 && (
-        <section>
-          <div className="eyebrow" style={{ marginBottom: "var(--space-3)" }}>
-            Refused reports with no market named
-          </div>
-          <div className="card" style={{ maxWidth: 820 }}>
+        <section className="wallet" aria-label="Refused reports with no market named">
+          <div className="eyebrow">Refused reports with no market named</div>
+          <div>
             <div className="muted" style={{ fontSize: 13, marginBottom: "var(--space-2)" }}>
               A report names the contract it was delivered to, never the market. Where nothing on
               that contract was still awaiting settlement, the refusal was a re-delivery of
@@ -236,33 +221,22 @@ function AttemptCard({ attempt }: { attempt: Attempt }) {
   const refused = attempt.state === "rejected";
 
   return (
-    <div
-      className="card"
-      style={{ maxWidth: 820, marginBottom: "var(--space-4)", boxShadow: "var(--shadow-md)" }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {cat && (
-          <span className="tag" style={cat.tagStyle}>
-            {cat.name}
-          </span>
+    <div className={`attempt${refused ? " refused" : ""}`}>
+      <div className="attempt-head">
+        {cat?.image ? (
+          <img className="wallet-icon" src={cat.image} alt="" />
+        ) : (
+          <span className="wallet-icon wallet-icon-glyph live" aria-hidden="true">⟳</span>
         )}
-        <span className="heading" style={{ fontSize: 17 }}>
-          {attempt.market?.question ?? attempt.marketKey}
-        </span>
-        <span
-          className="tag"
-          style={{
-            marginLeft: "auto",
-            border: `1px solid ${refused ? "var(--color-negative)" : "var(--color-accent)"}`,
-            color: refused ? "var(--color-negative)" : "var(--color-accent)",
-            background: "transparent",
-          }}
-        >
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="wallet-row-name">{attempt.market?.question ?? attempt.marketKey}</div>
+          {cat && <div className="muted" style={{ fontSize: 12 }}>{cat.name}</div>}
+        </div>
+        <span className={`wallet-status ${refused ? "lost" : "pending"}`}>
+          {!refused && <span className="spinner" aria-hidden="true" />}
           {STATE_COPY[attempt.state]}
         </span>
       </div>
-
-      <div className="divider" style={{ margin: "var(--space-3) 0" }} />
 
       <Stage
         n={1}
@@ -410,36 +384,12 @@ function Stage({
   negative?: boolean;
   detail?: React.ReactNode;
 }) {
-  const colour = negative
-    ? "var(--color-negative)"
-    : done
-      ? "var(--color-accent)"
-      : "var(--color-neutral-600)";
+  const state = negative ? "negative" : done ? "done" : "todo";
   return (
-    <div style={{ display: "flex", gap: "var(--space-3)", padding: "var(--space-2) 0" }}>
-      <div
-        style={{
-          width: 20,
-          height: 20,
-          flexShrink: 0,
-          borderRadius: "50%",
-          border: `1px solid ${colour}`,
-          color: colour,
-          fontSize: 10,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        {n}
-      </div>
-      <div style={{ minWidth: 0, flex: 1, opacity: muted ? 0.6 : 1 }}>
-        <div
-          className="muted"
-          style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}
-        >
-          {title}
-        </div>
+    <div className={`stage ${state}${muted ? " muted-stage" : ""}`}>
+      <div className="stage-n">{done && !negative ? "✓" : n}</div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div className="stage-title">{title}</div>
         {detail ?? <div className="muted-strong" style={{ fontSize: 12 }}>—</div>}
       </div>
     </div>
@@ -473,69 +423,89 @@ function HistoryRow({
   const cat = attempt.market ? category(attempt.market.categoryId) : null;
   const refused = attempt.state === "rejected";
 
+  const requestedAt =
+    attempt.requested && times.has(attempt.requested.blockNumber) ? times.get(attempt.requested.blockNumber)! : null;
+  const outcome = attempt.settled ? (attempt.settled.outcome as Outcome) : null;
+
   return (
-    <tr style={refused ? { boxShadow: "inset 2px 0 0 var(--color-negative)" } : undefined}>
-      <td data-label="Market">
-        {cat && (
-          <span className="tag" style={{ ...cat.tagStyle, marginRight: 8 }}>
-            {cat.name}
+    <li className={`wallet-row position-row${refused ? " refused" : ""}`}>
+      {cat?.image ? (
+        <img className="wallet-icon" src={cat.image} alt="" />
+      ) : (
+        <span className="wallet-icon wallet-icon-glyph" aria-hidden="true">✓</span>
+      )}
+      <div className="wallet-row-main">
+        <div className="wallet-row-name">{attempt.market?.question ?? attempt.marketKey}</div>
+        <div className="wallet-row-chains">
+          {cat && <span className="muted">{cat.name}</span>}
+          {attempt.requested ? (
+            // When, in words; the block it happened in is a hover and a click
+            // away. A column of eight-digit block numbers told nobody anything.
+            <a
+              className="muted"
+              href={blockUrl(attempt.requested.blockNumber)}
+              target="_blank"
+              rel="noreferrer"
+              title={`block ${attempt.requested.blockNumber}${requestedAt ? ` · ${formatTimestamp(requestedAt)}` : ""}`}
+            >
+              requested {requestedAt ? formatRelative(requestedAt, now) : `at block ${attempt.requested.blockNumber}`}
+            </a>
+          ) : (
+            <span className="muted">requested before this scan</span>
+          )}
+          {attempt.report ? (
+            <span className={attempt.report.accepted ? "up" : "down"}>
+              report {attempt.report.accepted ? "accepted" : "refused"}
+              {attempt.report.accepted && attempt.blocksToReport !== null && (
+                <span className="muted"> in {gapLabel(attempt)}</span>
+              )}
+            </span>
+          ) : attempt.state === "abandoned" ? (
+            /*
+             * Not "not in range". That phrase means a forwarder log probably
+             * exists and this scan did not reach it — a shrug. Here the market
+             * was voided on chain by a call that emits nothing, so no report was
+             * ever accepted and none is coming. Saying the two the same way
+             * would let a real gap in the scan hide behind a resolved market.
+             */
+            <span className="muted" title="Status is Void on chain with no settlement log behind it — `ownerVoid` emits nothing.">
+              no report — voided
+            </span>
+          ) : (
+            <span className="muted" title="No forwarder log in the scanned range — not a failure.">
+              report not in range
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="wallet-row-value">
+        <span className={`wallet-status ${outcome === Outcome.Yes ? "done" : outcome === Outcome.No ? "neutral" : outcome === null ? "lost" : "slow"}`}>
+          {outcome !== null ? outcomeLabel(outcome) : refused ? "Refused" : "—"}
+        </span>
+        <div className="muted" style={{ fontSize: 12 }}>
+          {attempt.settled && attempt.market && attempt.settled.outcome !== Outcome.Void
+            ? formatMarketValue(attempt.market.categoryId, attempt.settled.observedValue)
+            : ""}
+        </div>
+      </div>
+      <div className="wallet-row-action position-actions">
+        {attempt.payouts.length > 0 && (
+          <span className="muted" style={{ fontSize: 12, textAlign: "right" }}>
+            {attempt.payouts.length} paid
           </span>
         )}
-        {attempt.market?.question ?? attempt.marketKey}
-      </td>
-      <td data-label="Requested">
-        {attempt.requested ? (
-          // When, in words; the block it happened in is a hover and a click
-          // away. A column of eight-digit block numbers told nobody anything.
+        {(attempt.settled ?? attempt.report) && (
           <a
-            href={blockUrl(attempt.requested.blockNumber)}
+            className="btn position-view"
+            href={txUrl((attempt.settled ?? attempt.report)!.txHash)}
             target="_blank"
             rel="noreferrer"
-            title={`block ${attempt.requested.blockNumber}${
-              times.has(attempt.requested.blockNumber)
-                ? ` · ${formatTimestamp(times.get(attempt.requested.blockNumber)!)}`
-                : ""
-            }`}
           >
-            {times.has(attempt.requested.blockNumber)
-              ? formatRelative(times.get(attempt.requested.blockNumber)!, now)
-              : `block ${attempt.requested.blockNumber}`}
+            Tx ↗
           </a>
-        ) : (
-          <span className="muted">before this scan</span>
         )}
-      </td>
-      <td data-label="Report">
-        {attempt.report ? (
-          <span style={{ color: attempt.report.accepted ? undefined : "var(--color-negative)" }}>
-            {attempt.report.accepted ? "accepted" : "refused"}
-          </span>
-        ) : attempt.state === "abandoned" ? (
-          /*
-           * Not "not in range". That phrase means a forwarder log probably
-           * exists and this scan did not reach it — a shrug. Here the market
-           * was voided on chain by a call that emits nothing, so no report was
-           * ever accepted and none is coming. Saying the two the same way
-           * would let a real gap in the scan hide behind a resolved market.
-           */
-          <span className="muted" title="Status is Void on chain with no settlement log behind it — `ownerVoid` emits nothing.">
-            none — voided
-          </span>
-        ) : (
-          <span className="muted" title="No forwarder log in the scanned range — not a failure.">
-            not in range
-          </span>
-        )}
-      </td>
-      <td data-label="Outcome">{attempt.settled ? outcomeLabel(attempt.settled.outcome as Outcome) : "—"}</td>
-      <td data-label="Observed">
-        {attempt.settled && attempt.market && attempt.settled.outcome !== Outcome.Void
-          ? formatMarketValue(attempt.market.categoryId, attempt.settled.observedValue)
-          : "—"}
-      </td>
-      <td data-label="Gap">{gapLabel(attempt)}</td>
-      <td data-label="Payouts">{attempt.payouts.length > 0 ? String(attempt.payouts.length) : "—"}</td>
-    </tr>
+      </div>
+    </li>
   );
 }
 

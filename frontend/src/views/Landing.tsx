@@ -304,24 +304,17 @@ export function Landing({
         </div>
       </div>
 
-      <div
-        style={{
-          background: "linear-gradient(180deg, var(--color-section), var(--color-section-glow))",
-          padding: "40px var(--page-x)",
-        }}
-      >
-        <div className="grid-4" style={{ gap: "var(--space-6)", maxWidth: 1200 }}>
+      {/* The figures in the wallet's style: one card, a box per figure,
+          rather than a full-bleed band of loose numbers. */}
+      <div style={{ padding: "8px var(--page-x) 0" }}>
+        <section className="wallet landing-stats" aria-label="At a glance">
           {stats.map((s) => (
             <div key={s.label}>
-              <div className="heading" style={{ fontSize: 32, color: "#f3f5fe" }}>
-                {s.value}
-              </div>
-              <div style={{ fontSize: 12, color: "var(--color-accent-2-300)", marginTop: 2 }}>
-                {s.label}
-              </div>
+              <b>{s.value}</b>
+              <span>{s.label}</span>
             </div>
           ))}
-        </div>
+        </section>
       </div>
 
       <div style={{ padding: "56px var(--page-x) 16px" }}>
@@ -337,14 +330,14 @@ export function Landing({
               <Reveal key={c.id} delay={i * 60}>
                 <div
                   className={`card${c.live ? " card-interactive" : ""}`}
-                  style={{ opacity: c.live ? 1 : 0.55, height: "100%" }}
+                  style={{ opacity: c.live ? 1 : 0.55, height: "100%", borderRadius: "var(--radius-lg)" }}
                   onClick={() => c.live && onPickCategory(c.id)}
                 >
                   <div
                     style={{
                       margin: "calc(-1 * var(--space-3)) calc(-1 * var(--space-3)) 0",
                       height: 92,
-                      borderRadius: "var(--radius-md) var(--radius-md) 0 0",
+                      borderRadius: "var(--radius-lg) var(--radius-lg) 0 0",
                       background: coverBackground(c.image),
                       display: "flex",
                       alignItems: "center",

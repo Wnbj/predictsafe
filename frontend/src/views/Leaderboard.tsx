@@ -4,6 +4,13 @@ import { formatSigned, formatToken, initials, shortAddress } from "../lib/format
 import { deriveTraders } from "../hooks/useChainData";
 import type { LpEvent, Market, TradeEvent } from "../lib/types";
 
+type Trader = ReturnType<typeof deriveTraders>[number];
+
+/**
+ * Every wallet that has staked, ranked by realised profit — in the wallet's
+ * style: a headline, a podium for the top three, and a list with each
+ * trader's record under their name.
+ */
 export function Leaderboard({
   loading,
   markets,
@@ -24,145 +31,145 @@ export function Leaderboard({
   );
 
   const isYou = (a: string) => account !== null && a.toLowerCase() === account.toLowerCase();
-  const podium = traders.slice(0, 3);
+  const name = (a: string) => (isYou(a) ? "You" : shortAddress(a));
+  const staked = traders.reduce((s, t) => s + t.staked, 0n);
+  const yourRank = account ? traders.findIndex((t) => isYou(t.address)) : -1;
+  // Second, first, third: the winner stands in the middle.
+  const podium = [traders[1], traders[0], traders[2]];
 
   return (
     <div className="page">
       <h2 className="heading" style={{ fontSize: 32, margin: "0 0 var(--space-2)" }}>
         Leaderboard
       </h2>
-      <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
+      <p className="muted" style={{ margin: "0 0 var(--space-6)", maxWidth: 780 }}>
         Every wallet that has staked, ranked by realised profit across resolved markets. Built
         from on-chain events — no off-chain scoring.
       </p>
 
-      {loading && traders.length === 0 ? (
-        <div className="muted" style={{ fontSize: 13 }}>Loading trade history from Sepolia…</div>
-      ) : traders.length === 0 ? (
-        <div className="card" style={{ maxWidth: 520 }}>
-          <div className="heading" style={{ fontSize: 17 }}>
-            No traders yet
+      <section className="wallet board" aria-label="Leaderboard">
+        <div className="wallet-head">
+          <div>
+            <div className="eyebrow">Ranked by realised profit</div>
+            <div className="wallet-total">
+              {loading && traders.length === 0 ? "…" : `${traders.length} trader${traders.length === 1 ? "" : "s"}`}
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              {yourRank >= 0 ? `you are #${yourRank + 1}` : account ? "you have not staked yet" : "connect a wallet to find yourself"}
+            </div>
           </div>
-          <div className="muted" style={{ fontSize: 13 }}>
-            Once wallets stake on a market they will appear here.
+          <div className="positions-stats">
+            <div>
+              <span>Staked</span>
+              <b>{formatToken(staked)}</b>
+            </div>
+            <div>
+              <span>Markets</span>
+              <b>{markets.length}</b>
+            </div>
+            <div className={traders[0] && traders[0].profit > 0n ? "accent" : undefined}>
+              <span>Best</span>
+              <b>{traders[0] ? formatSigned(traders[0].profit) : "—"}</b>
+            </div>
           </div>
         </div>
-      ) : (
-        <>
-          {podium.length > 0 && (
-            <div className="grid-3" style={{ maxWidth: 900, marginBottom: "var(--space-6)" }}>
-              {podium.map((t, i) => (
-                <div
-                  key={t.address}
-                  className="card"
-                  style={
-                    i === 0
-                      ? { boxShadow: "var(--shadow-md), inset 0 0 0 1px var(--color-accent)" }
-                      : undefined
-                  }
-                >
-                  <div className="eyebrow">Rank {i + 1}</div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <Avatar address={t.address} size={36} />
-                    <div className="heading" style={{ fontSize: 17 }}>
-                      {isYou(t.address) ? "You" : shortAddress(t.address)}
-                    </div>
-                  </div>
-                  <div
-                    className="muted-strong"
-                    style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}
+
+        {loading && traders.length === 0 ? (
+          <ul className="wallet-list">
+            {[0, 1, 2].map((i) => (
+              <li key={i} className="wallet-row">
+                <span className="wallet-icon skeleton" />
+                <div className="skeleton" style={{ height: 14, width: "40%" }} />
+              </li>
+            ))}
+          </ul>
+        ) : traders.length === 0 ? (
+          <div className="muted" style={{ fontSize: 13, padding: "var(--space-4) 0" }}>
+            No traders yet. Once wallets stake on a market they will appear here.
+          </div>
+        ) : (
+          <>
+            <div className="podium">
+              {podium.map((t, i) =>
+                t ? (
+                  <a
+                    key={t.address}
+                    className={`podium-step place-${i === 1 ? 1 : i === 0 ? 2 : 3}${isYou(t.address) ? " you" : ""}`}
+                    href={addressUrl(t.address)}
+                    target="_blank"
+                    rel="noreferrer"
                   >
-                    <span>
+                    <span className="podium-medal">{i === 1 ? 1 : i === 0 ? 2 : 3}</span>
+                    <Avatar address={t.address} size={i === 1 ? 56 : 44} />
+                    <b>{name(t.address)}</b>
+                    <span className={t.profit >= 0n ? "up" : "down"}>{formatSigned(t.profit)}</span>
+                    <span className="muted">
                       {t.wins}/{t.settledMarkets} won
                     </span>
-                    <span
-                      style={{
-                        color: t.profit >= 0n ? "var(--color-accent-300)" : "var(--color-negative)",
-                      }}
-                    >
-                      {formatSigned(t.profit)}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                  </a>
+                ) : (
+                  <div key={`empty-${i}`} className="podium-step empty" />
+                ),
+              )}
             </div>
-          )}
 
-          <div className="table-scroll">
-            <table className="data" style={{ maxWidth: 900 }}>
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Trader</th>
-                  <th>Staked</th>
-                  <th>Resolved</th>
-                  <th>Won</th>
-                  <th>Profit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {traders.map((t, i) => (
-                  <tr
-                    key={t.address}
-                    style={
-                      isYou(t.address)
-                        ? { boxShadow: "inset 2px 0 0 var(--color-accent)" }
-                        : undefined
-                    }
-                  >
-                    <td>{i + 1}</td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <Avatar address={t.address} size={24} />
-                        <a
-                          href={addressUrl(t.address)}
-                          target="_blank"
-                          rel="noreferrer"
-                          style={{ textDecoration: "none" }}
-                        >
-                          {isYou(t.address) ? "You" : shortAddress(t.address)}
-                        </a>
-                      </div>
-                    </td>
-                    <td>{formatToken(t.staked)}</td>
-                    <td>{t.settledMarkets}</td>
-                    <td>{t.wins}</td>
-                    <td
-                      style={{
-                        color: t.profit >= 0n ? "var(--color-accent-300)" : "var(--color-negative)",
-                      }}
-                    >
-                      {formatSigned(t.profit)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+            <ul className="wallet-list">
+              {traders.map((t, i) => (
+                <TraderRow key={t.address} t={t} rank={i + 1} you={isYou(t.address)} />
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
     </div>
   );
 }
 
-function Avatar({ address, size }: { address: string; size: number }) {
+function TraderRow({ t, rank, you }: { t: Trader; rank: number; you: boolean }) {
+  const rate = t.settledMarkets > 0 ? t.wins / t.settledMarkets : 0;
   return (
-    <div
+    <li className={`wallet-row board-row${you ? " you" : ""}`}>
+      <span className="board-rank">{rank}</span>
+      <div className="wallet-row-main">
+        <div className="wallet-row-name board-name">
+          <Avatar address={t.address} size={26} />
+          {you ? "You" : shortAddress(t.address)}
+        </div>
+        <div className="wallet-row-chains">
+          <span className="muted">{formatToken(t.staked)} staked</span>
+          <span className="muted">
+            {t.wins}/{t.settledMarkets} won
+          </span>
+          <span className="board-rate" title={`${Math.round(rate * 100)}% of resolved markets won`}>
+            <span style={{ width: `${Math.round(rate * 100)}%` }} />
+          </span>
+        </div>
+      </div>
+      <div className="wallet-row-value">
+        <div className={t.profit > 0n ? "up" : t.profit < 0n ? "down" : undefined}>{formatSigned(t.profit)}</div>
+        <div className="muted">{Math.round(rate * 100)}% win rate</div>
+      </div>
+      <a className="btn wallet-row-action" href={addressUrl(t.address)} target="_blank" rel="noreferrer" title="Open on Etherscan">
+        Etherscan ↗
+      </a>
+    </li>
+  );
+}
+
+/** Initials on a colour taken from the address, so the same wallet always looks the same. */
+function Avatar({ address, size }: { address: string; size: number }) {
+  const hue = parseInt(address.slice(2, 6), 16) % 360;
+  return (
+    <span
+      className="board-avatar"
       style={{
         width: size,
         height: size,
-        borderRadius: "50%",
-        background: "var(--color-accent-800)",
-        color: "var(--color-accent-100)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontSize: size < 30 ? 10 : 13,
-        fontWeight: 600,
-        flexShrink: 0,
+        fontSize: size < 30 ? 10 : size < 50 ? 13 : 16,
+        background: `linear-gradient(135deg, hsl(${hue} 45% 42%), hsl(${(hue + 40) % 360} 40% 28%))`,
       }}
     >
       {initials(address)}
-    </div>
+    </span>
   );
 }
