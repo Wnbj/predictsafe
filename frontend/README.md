@@ -22,7 +22,7 @@ Sepolia. Reads work without one.
 | `/` | Landing | stats, categories, most-backed markets |
 | `/markets` | Markets | every market, filterable by category; untouched test markets hidden behind a count |
 | `/markets/:category/:id` | Detail | odds, price chart, strike ladder, stake / buy / sell, settlement evidence |
-| `/portfolio` | Portfolio | tokenized assets first, then market positions with claim / redeem / withdraw |
+| `/portfolio` | Portfolio | the wallet (mUSDC and tokens on both chains, bridge, activity), then market positions with claim / redeem / withdraw |
 | `/trade` | Trade | the synthetic gold and S&P 500 ETF exchange |
 | `/leaderboard` | Leaderboard | wallets scored against resolved outcomes |
 | `/live` | Live | settlements arriving from the DON, read from logs every six seconds |
@@ -85,10 +85,13 @@ to the node directly. Setup is in RUNBOOK under "Hosting the frontend".
 
 `src/lib/ccip.ts` holds both chains' CCIP routers and selectors and the
 exchange tokens' addresses on Base Sepolia, and builds `ccipSend` calls with the
-fee in native gas. `components/BridgeControls.tsx` is the portfolio column that
-uses it: Base balance, send either way, CCIP Explorer link. Base Sepolia is
-read straight from its public RPC (`https://sepolia.base.org`, which answers
-browser origins); Sepolia still goes through the paced queue.
+fee in native gas. `components/Wallet.tsx` is the portfolio's wallet card —
+balances per chain, total in dollars, Assets and Activity tabs — and
+`BridgeDialog.tsx` the send. `lib/transfers.ts` keeps sent transfers in
+localStorage and marks one arrived when the destination token mints exactly
+that amount to the wallet after the send. Base Sepolia is read straight from
+its public RPC (`https://sepolia.base.org`, which answers browser origins but
+caps `eth_getLogs` at 200 blocks); Sepolia still goes through the paced queue.
 `writeWithApproval` and `waitForTx` take a token and a `TxNetwork`, so the same
 one-prompt approval works for a bridge from either side.
 

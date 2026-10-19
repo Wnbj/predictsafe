@@ -9,7 +9,7 @@ import {
   waitForTx,
 } from "../lib/chain";
 import { SummaryCard } from "../components/SummaryCard";
-import { TokenizedHoldings } from "../components/TokenizedHoldings";
+import { Wallet } from "../components/Wallet";
 import { MarketStatus, type Market, type Position } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
@@ -156,7 +156,7 @@ export function Portfolio({
         * First, not last: below the market table it sat under every position
         * this wallet ever took — 29 rows on the deployer — and read as missing.
         */}
-      <TokenizedHoldings account={wallet.account} onOpenTrade={onOpenTrade} />
+      <Wallet account={wallet.account} onOpenTrade={onOpenTrade} />
 
       <div className="eyebrow" style={{ marginBottom: "var(--space-2)" }}>Prediction markets</div>
       {marketsLoading ? (

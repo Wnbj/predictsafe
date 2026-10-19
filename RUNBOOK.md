@@ -1168,13 +1168,24 @@ whole configuration is accepted — it reverts for an unregistered token.
 
 **Fees** are paid in native gas: about 0.0002 ETH Sepolia → Base, 0.0006 ETH
 Base → Sepolia (quoted 2026-10-17). **Time**: CCIP waits for the source block to
-be final — about 20 minutes from Sepolia. Track a transfer on
-`https://ccip.chain.link/tx/<source tx hash>`.
+be final. Measured 2026-10-19 Sepolia → Base: sent 18:20, minted 18:35 UTC,
+15 minutes. Track a transfer on `https://ccip.chain.link/tx/<source tx hash>`.
 
-**In the app**: Portfolio → Tokenized assets → the "Cross-chain (CCIP)" column
-shows the Base Sepolia balance and sends either way; the wallet is switched to
-Base Sepolia (added if missing) for a send from there, and back afterwards.
-Approval and `ccipSend` go in one prompt where the wallet batches.
+**In the app**: Portfolio → the wallet card → CCIP Transfer (on a token's row, or the
+round button). It sends any amount either way — typed, or 25/50/75%/Max —
+quotes the fee and shows the gas balance on the source chain before anything
+is signed. The wallet is switched to Base Sepolia (added if missing) for a
+send from there, and back afterwards. Approval and `ccipSend` go in one prompt
+where the wallet batches — MetaMask did, on the first real transfer: one
+`execute` transaction on the EIP-7702 account carried both.
+
+Sent transfers are kept in the browser's localStorage per wallet, so they
+survive navigation and reloads, and show in the wallet's Activity tab as in
+transit until the destination token MINTS that exact amount to the wallet
+after the block it was sent at — searched in log chunks, 200 blocks at a time
+on Base Sepolia, which is all its public RPC answers. Tokens in transit count
+in the wallet's total. A transfer sent from another browser does not appear
+there; its tokens still show in the balances once they land.
 
 **Deploying on Sepolia now costs real gas units**: the pool's creation alone
 estimated at 28.5M on the node (forge's local EVM says far less). A 30M gas

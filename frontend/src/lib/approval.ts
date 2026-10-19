@@ -105,6 +105,8 @@ export interface ApprovedWrite {
   token?: Address;
   /** The chain it all happens on. Defaults to Sepolia. */
   network?: TxNetwork;
+  /** Called once the wallet has signed the call and it is only waiting for a block. */
+  onSubmitted?: () => void;
 }
 
 /** Sends the call, approving first if needed; resolves once it is confirmed. */
@@ -127,6 +129,7 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
 
   if (w.allowance >= w.amount) {
     const hash = await send(w.call);
+    w.onSubmitted?.();
     await waitForTx(hash, w.label, network);
     return hash;
   }
@@ -146,6 +149,7 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
       ],
     } as never)) as { id: string } | string;
     const id = typeof sent === "string" ? sent : sent.id;
+    w.onSubmitted?.();
     showToast({ id, state: "pending", title: `${w.label} sent`, detail: `Approval and ${w.label.toLowerCase()} in one transaction…` });
     try {
       const hash = await waitForBatch(id);
@@ -165,6 +169,7 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
   const approveHash = await send(approveCall(w.spender, approval, token));
   await waitForTx(approveHash, "Approval", network);
   const hash = await send(w.call);
+  w.onSubmitted?.();
   await waitForTx(hash, w.label, network);
   return hash;
 }
