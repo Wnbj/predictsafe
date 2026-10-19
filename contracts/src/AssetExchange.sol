@@ -6,6 +6,8 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReceiverTemplate} from "./interfaces/ReceiverTemplate.sol";
+import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
+import {IAny2EVMMessageReceiver} from "@chainlink/contracts-ccip/contracts/interfaces/IAny2EVMMessageReceiver.sol";
 
 /// @notice The subset of a Chainlink aggregator proxy this contract reads.
 interface IPriceFeed {
@@ -31,6 +33,8 @@ interface ISyntheticToken {
     function mint(address account, uint256 amount) external;
     /// Spends the caller's allowance from `account`. A seller approves first.
     function burnFrom(address account, uint256 amount) external;
+    /// Burns the caller's own tokens — what arrives here by CCIP to be sold.
+    function burn(uint256 amount) external;
 }
 
 /**
@@ -74,9 +78,20 @@ interface ISyntheticToken {
  *  back — rather than paid partially or left owing. That is an honest failure,
  *  and it is visible: `reserveAvailable()` says how much can be paid out now.
  *
+ *  A SALE CAN ARRIVE BY CCIP. Tokens on another chain are claims on this one
+ *  reserve, and selling them used to take two steps and two waits: bring them
+ *  back, then sell. A CCIP message that carries the tokens TO THIS CONTRACT
+ *  is a sell order instead — "programmable token transfer": the pool mints
+ *  the tokens here, `ccipReceive` burns them and places the order for the
+ *  sender, and the order fills at the next new price like any other. Anything
+ *  that cannot become a sale — an unknown token, an inactive asset, several
+ *  tokens at once — is handed straight to the sender rather than reverted,
+ *  because a revert would leave the tokens in a failed message until someone
+ *  executed it by hand.
+ *
  *  NOT AUDITED. POC only, on a testnet, with a freely mintable stake token.
  */
-contract AssetExchange is ReceiverTemplate {
+contract AssetExchange is ReceiverTemplate, IAny2EVMMessageReceiver {
     using SafeERC20 for IERC20;
 
     // --- types -------------------------------------------------------------
@@ -151,6 +166,11 @@ contract AssetExchange is ReceiverTemplate {
     uint256[] internal _pending;
     mapping(uint256 => uint256) internal _pendingSlot; // orderId => index + 1
 
+    /// The CCIP router allowed to deliver messages to `ccipReceive`.
+    address public immutable ccipRouter;
+    /// Source chains whose messages may place orders here.
+    mapping(uint64 => bool) public ccipSourceAllowed;
+
     // --- events ------------------------------------------------------------
 
     event AssetListed(uint32 indexed assetId, string symbol, address feed, address token);
@@ -178,6 +198,13 @@ contract AssetExchange is ReceiverTemplate {
         int256 fillPrice
     );
     event OrderRefunded(uint256 indexed orderId, address indexed trader, RefundReason reason);
+    event CcipSourceSet(uint64 indexed chainSelector, bool allowed);
+    /// A sell order placed by tokens that arrived over CCIP.
+    event CcipSellPlaced(
+        uint256 indexed orderId, bytes32 indexed messageId, uint64 sourceChainSelector, address indexed trader
+    );
+    /// Tokens that arrived over CCIP and could not be sold, handed to the sender.
+    event CcipTokensReturned(bytes32 indexed messageId, address indexed trader, address token, uint256 amount);
 
     // --- errors ------------------------------------------------------------
 
@@ -189,10 +216,13 @@ contract AssetExchange is ReceiverTemplate {
     error NotYourOrder();
     error TooEarlyToCancel();
     error TooManyOrders();
+    error NotCcipRouter(address caller);
+    error CcipSourceNotAllowed(uint64 chainSelector);
 
-    constructor(IERC20 _usdc, address _forwarder) ReceiverTemplate(_forwarder) {
+    constructor(IERC20 _usdc, address _forwarder, address _ccipRouter) ReceiverTemplate(_forwarder) {
         usdc = _usdc;
         usdcDecimals = IERC20Metadata(address(_usdc)).decimals();
+        ccipRouter = _ccipRouter;
     }
 
     // --- assets ------------------------------------------------------------
@@ -244,7 +274,7 @@ contract AssetExchange is ReceiverTemplate {
         if (usdcIn == 0) revert ZeroAmount();
         usdc.safeTransferFrom(msg.sender, address(this), usdcIn);
         escrowedUsdc += usdcIn;
-        orderId = _place(assetId, Side.Buy, usdcIn);
+        orderId = _place(assetId, Side.Buy, usdcIn, msg.sender);
     }
 
     /// Give up `tokensIn` now; receive mUSDC at the next new price. The tokens
@@ -253,10 +283,10 @@ contract AssetExchange is ReceiverTemplate {
     function placeSell(uint32 assetId, uint256 tokensIn) external returns (uint256 orderId) {
         if (tokensIn == 0) revert ZeroAmount();
         _assetOrRevert(assetId).token.burnFrom(msg.sender, tokensIn);
-        orderId = _place(assetId, Side.Sell, tokensIn);
+        orderId = _place(assetId, Side.Sell, tokensIn, msg.sender);
     }
 
-    function _place(uint32 assetId, Side side, uint256 amountIn) internal returns (uint256 orderId) {
+    function _place(uint32 assetId, Side side, uint256 amountIn, address trader) internal returns (uint256 orderId) {
         Asset storage a = _assetOrRevert(assetId);
         if (!a.active) revert AssetInactive();
         (uint80 round, int256 answer,,,) = a.feed.latestRoundData();
@@ -264,7 +294,7 @@ contract AssetExchange is ReceiverTemplate {
 
         orderId = _orders.length;
         _orders.push(Order({
-            trader: msg.sender,
+            trader: trader,
             assetId: assetId,
             side: side,
             status: Status.Pending,
@@ -278,7 +308,58 @@ contract AssetExchange is ReceiverTemplate {
         }));
         _pending.push(orderId);
         _pendingSlot[orderId] = _pending.length;
-        emit OrderPlaced(orderId, msg.sender, assetId, side, amountIn, round, answer);
+        emit OrderPlaced(orderId, trader, assetId, side, amountIn, round, answer);
+    }
+
+    // --- sales that arrive over CCIP ------------------------------------------
+
+    /// Which chains may send sales here. Owner-only: a lane is a trust decision.
+    function setCcipSource(uint64 chainSelector, bool allowed) external onlyOwner {
+        ccipSourceAllowed[chainSelector] = allowed;
+        emit CcipSourceSet(chainSelector, allowed);
+    }
+
+    /**
+     * Tokens sent here over CCIP become a sell order for whoever sent them —
+     * or for the address in `data`, if it holds exactly one. Whoever pays the
+     * tokens chooses who is paid for them, exactly as with `placeSell`, so
+     * naming someone else gives nothing away.
+     */
+    function ccipReceive(Client.Any2EVMMessage calldata message) external override {
+        if (msg.sender != ccipRouter) revert NotCcipRouter(msg.sender);
+        if (!ccipSourceAllowed[message.sourceChainSelector]) {
+            revert CcipSourceNotAllowed(message.sourceChainSelector);
+        }
+
+        address trader = message.data.length == 32 ? abi.decode(message.data, (address)) : address(0);
+        if (trader == address(0)) trader = abi.decode(message.sender, (address));
+
+        Client.EVMTokenAmount[] calldata sent = message.destTokenAmounts;
+        if (sent.length == 1 && sent[0].amount > 0) {
+            (bool found, uint32 assetId) = _assetForToken(sent[0].token);
+            if (found && _assets[assetId].active) {
+                _assets[assetId].token.burn(sent[0].amount);
+                uint256 orderId = _place(assetId, Side.Sell, sent[0].amount, trader);
+                emit CcipSellPlaced(orderId, message.messageId, message.sourceChainSelector, trader);
+                return;
+            }
+        }
+        for (uint256 i; i < sent.length; i++) {
+            IERC20(sent[i].token).safeTransfer(trader, sent[i].amount);
+            emit CcipTokensReturned(message.messageId, trader, sent[i].token, sent[i].amount);
+        }
+    }
+
+    function _assetForToken(address token) internal view returns (bool, uint32) {
+        for (uint32 i; i < _assets.length; i++) {
+            if (address(_assets[i].token) == token) return (true, i);
+        }
+        return (false, 0);
+    }
+
+    /// The router only calls `ccipReceive` on a contract that says it has one.
+    function supportsInterface(bytes4 interfaceId) public pure override returns (bool) {
+        return interfaceId == type(IAny2EVMMessageReceiver).interfaceId || super.supportsInterface(interfaceId);
     }
 
     /// Take back an order that has waited `CANCEL_AFTER` without a new price.

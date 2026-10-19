@@ -9,7 +9,7 @@ import {
 } from "viem";
 import { baseSepolia } from "viem/chains";
 import { publicClient, SEPOLIA_NETWORK, type ContractCall, type TxNetwork } from "./chain";
-import { EXCHANGE_TOKENS } from "./config";
+import { EXCHANGE_ADDRESS, EXCHANGE_TOKENS } from "./config";
 import { getActiveProvider } from "./providers";
 
 /**
@@ -82,15 +82,46 @@ const routerAbi = parseAbi([
  * native gas token (`feeToken` zero), no payload, default extra args — an
  * EOA receives tokens without running code, so no gas limit is needed for it.
  */
-export function bridgeMessage(receiver: Address, token: Address, amount: bigint) {
+export function bridgeMessage(receiver: Address, token: Address, amount: bigint, call?: ReceiverCall) {
   return {
     receiver: encodeAbiParameters([{ type: "address" }], [receiver]),
-    data: "0x" as `0x${string}`,
+    data: call?.data ?? ("0x" as `0x${string}`),
     tokenAmounts: [{ token, amount }],
     feeToken: zeroAddress,
-    extraArgs: "0x" as `0x${string}`,
+    extraArgs: call ? gasLimitArgs(call.gasLimit) : ("0x" as `0x${string}`),
   };
 }
+
+/** A message that runs code on arrival, not just delivers tokens. */
+export interface ReceiverCall {
+  data: `0x${string}`;
+  /** Gas for `ccipReceive` on the destination. */
+  gasLimit: bigint;
+}
+
+/**
+ * Extra args with a gas limit for the receiver: the GenericExtraArgsV2 tag,
+ * then (gasLimit, allowOutOfOrderExecution). The 2.0 on-ramp still accepts
+ * this legacy form and quotes it the same as its own (checked on Base Sepolia
+ * 2026-10-19); without a gas limit the receiver would never be called.
+ */
+export const gasLimitArgs = (gasLimit: bigint): `0x${string}` =>
+  `0x181dcf10${encodeAbiParameters([{ type: "uint256" }, { type: "bool" }], [gasLimit, true]).slice(2)}`;
+
+/**
+ * Selling from Base Sepolia in one signature: the tokens go to the EXCHANGE
+ * on Sepolia, with the seller's address as data, and `ccipReceive` there
+ * burns them and places the sell order — a CCIP programmable token transfer.
+ * 400k gas covers it with room: the contract test holds it under 300k.
+ */
+export const SELL_ON_ARRIVAL_GAS = 400_000n;
+
+export const sellOnArrival = (seller: Address): ReceiverCall => ({
+  data: encodeAbiParameters([{ type: "address" }], [seller]),
+  gasLimit: SELL_ON_ARRIVAL_GAS,
+});
+
+export const EXCHANGE_ON_SEPOLIA = EXCHANGE_ADDRESS;
 
 const other = (side: CcipSide): CcipSide => (side === "sepolia" ? "base" : "sepolia");
 const clientOn = (side: CcipSide) => (side === "sepolia" ? publicClient : basePublicClient);
@@ -100,22 +131,35 @@ const clientOn = (side: CcipSide) => (side === "sepolia" ? publicClient : basePu
  * sent and rejects anything short, and the quote moves with gas prices between
  * reading it and the transaction landing — a small margin beats a revert.
  */
-export async function bridgeFee(from: CcipSide, receiver: Address, token: Address, amount: bigint): Promise<bigint> {
+export async function bridgeFee(
+  from: CcipSide,
+  receiver: Address,
+  token: Address,
+  amount: bigint,
+  call?: ReceiverCall,
+): Promise<bigint> {
   const fee = await clientOn(from).readContract({
     address: CCIP_CHAINS[from].router,
     abi: routerAbi,
     functionName: "getFee",
-    args: [CCIP_CHAINS[other(from)].selector, bridgeMessage(receiver, token, amount)],
+    args: [CCIP_CHAINS[other(from)].selector, bridgeMessage(receiver, token, amount, call)],
   });
   return (fee * 105n) / 100n;
 }
 
-export function ccipSendCall(from: CcipSide, receiver: Address, token: Address, amount: bigint, fee: bigint): ContractCall {
+export function ccipSendCall(
+  from: CcipSide,
+  receiver: Address,
+  token: Address,
+  amount: bigint,
+  fee: bigint,
+  call?: ReceiverCall,
+): ContractCall {
   return {
     address: CCIP_CHAINS[from].router,
     abi: routerAbi,
     functionName: "ccipSend",
-    args: [CCIP_CHAINS[other(from)].selector, bridgeMessage(receiver, token, amount)],
+    args: [CCIP_CHAINS[other(from)].selector, bridgeMessage(receiver, token, amount, call)],
     value: fee,
   };
 }

@@ -71,8 +71,8 @@ through **Chainlink CCIP** — see
    │  the base)   │  └ ReserveMarket   │             │  token)      │
    └──────────────┴────────────────────┴─────────────┴──────────────┘
    ┌───────────────────────────────┬─────────────────────────────────┐
-   │ AssetExchange                 │ SettlementKeeper                │
-   │ (synthetic gold, S&P 500 ETF) │ (requests settlement when due)  │
+   │ AssetExchange                 │ Keeper + MarketScheduler        │
+   │ (synthetic gold, S&P 500 ETF) │ (settle when due, open markets) │
    └───────────────────────────────┴─────────────────────────────────┘
                                    ▲
                                    │ viem, EIP-6963
@@ -91,10 +91,11 @@ through **Chainlink CCIP** — see
 | ReserveMarket | `0xa768Be2741A0464b81606649eCa45bfF7aD4d939` |
 | AmmMarket | `0xc9961096dc98eE17eD28bB417BB726F1b64f84FF` |
 | MockUSDC | `0xcd123a8d74ef062dddd2287e87bc88eb3b208b54` |
-| AssetExchange | `0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2` |
+| AssetExchange | `0xaf764C8D21b2f057E5864125f9DB9c271ADfa340` |
 | sXAU / sCSPX (CCIP tokens) | `0x502640827C31ce347FBe42a5bD6e08Dc98C4a9E0` / `0x2f42A5233311B1Ee291Bfd958039A0449E1F03CD` |
 | sXAU / sCSPX on **Base Sepolia** | `0xc20BFD974F374669cAC5994D1E712F03BC102242` / `0x95f4f643654cf63171eD5a8d6751752Ba43793CA` |
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
+| MarketScheduler | `0x8559a6e035bEC9F85369B9736054092ff579B01e` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -280,6 +281,34 @@ Chainlink's `CrossChainToken`, deployed on their own, with the exchange as one
 minter and burner and the CCIP pool as the other. The lane runs CCIP 2.0; the
 pools are the matching 2.0 `BurnMintTokenPool`. RUNBOOK has the addresses and
 the deploy sequence.
+
+**Selling from Base takes one signature.** A token on Base is a claim on the
+reserve on Sepolia, so selling it used to mean bringing it back, waiting, then
+selling. Now the tokens can travel straight to the exchange with the sale
+attached — a CCIP *programmable token transfer*: the message carries the
+tokens and the seller's address, and the exchange's `ccipReceive` burns them
+and places the sell order the moment they land. It fills at the next new
+price like any other order and pays mUSDC on Sepolia. Anything that cannot
+become a sale — an unknown token, an asset no longer listed — is handed to the
+sender rather than reverted, because a reverted message leaves its tokens
+waiting for someone to execute it by hand.
+
+### The board opens itself
+
+Every market used to be opened by a person, so most of the time the board
+showed only resolved ones. `MarketScheduler` lets the DON open them on a
+schedule — a BTC market every hour, ETH every four hours, a daily one for
+each. Each hour the workflow works out the slot that ends next, takes the
+strike from the asset's Chainlink Data Feed rounded to a number a person would
+type, and reports the terms; the contract opens the market through the same
+public `newMarket` the app's Create button uses. Time comes from DON time and
+the price from the finalized block, so all ten nodes name the same market.
+
+What a report may open is bounded in the contract, not the workflow: each
+slot at most once (the workflow reads a finalized block, so it can repeat
+itself), at least five minutes left to stake, expiry within three days. The
+keeper and the crypto handler then settle these markets like any other — an
+hourly market opens, closes, settles and pays without anyone touching it.
 
 ### Nobody presses the button, and the DON still cannot call it
 

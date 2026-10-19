@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Address } from "viem";
 import { useBaseBalances, useBridgeTransfers } from "../hooks/useBridge";
 import { useExchange } from "../hooks/useExchange";
@@ -7,7 +7,7 @@ import { ASSET_IMAGES } from "../lib/categories";
 import { ccipExplorerTx, CCIP_CHAINS, type CcipSide } from "../lib/ccip";
 import { holdingsFor, marketState, valueOf, type ExchangeOrder, type ExchangeState, type OrderSide } from "../lib/exchange";
 import { formatRelative, formatToken, shortAddress } from "../lib/format";
-import { isPending, SLOW_AFTER_MS, type BridgeTransfer } from "../lib/transfers";
+import { findSellOrder, isPending, isSale, markSold, SLOW_AFTER_MS, type BridgeTransfer } from "../lib/transfers";
 import { BridgeDialog, type BridgeAsset } from "./BridgeDialog";
 import { TradeDialog } from "./TradeDialog";
 import { ChainBadge, formatDollars, formatUnitsShort } from "./walletParts";
@@ -78,6 +78,20 @@ export function Wallet({ account, onOpenTrade }: { account: Address; onOpenTrade
     [state, account],
   );
   const pendingOrders = myOrders.filter((o) => o.status === "pending").length;
+
+  // A sale sent from Base arrives as an order, not as tokens: mark it when
+  // the exchange shows one for exactly that amount.
+  useEffect(() => {
+    const claimed = new Set(transfers.flatMap((t) => (t.orderId !== undefined ? [t.orderId] : [])));
+    for (const t of transfers) {
+      if (!isSale(t) || !isPending(t)) continue;
+      const o = findSellOrder(t, account, myOrders, claimed);
+      if (o) {
+        claimed.add(o.id);
+        markSold(account, t.hash, o.id, o.placedAt * 1000);
+      }
+    }
+  }, [transfers, myOrders, account]);
   const waiting = state ? holdingsFor(state, account, true) : [];
 
   const openBridge = (symbol?: string) => {
@@ -88,7 +102,11 @@ export function Wallet({ account, onOpenTrade }: { account: Address; onOpenTrade
 
   const openTrade = (side: OrderSide) => {
     if (!state || state.assets.length === 0) return;
-    const held = side === "sell" ? state.assets.find((a) => a.balance > 0n) : undefined;
+    const held =
+      side === "sell"
+        ? state.assets.find((a) => a.balance > 0n) ??
+          state.assets.find((a) => (base.balances?.[`s${a.symbol}`] ?? 0n) > 0n)
+        : undefined;
     setTrade({ side, assetId: (held ?? state.assets[0]!).id });
   };
 
@@ -328,7 +346,7 @@ function TransferRow({ t, nowMs }: { t: BridgeTransfer; nowMs: number }) {
       <span className={`wallet-icon wallet-icon-glyph${pending ? " live" : ""}`} aria-hidden="true">⇄</span>
       <div className="wallet-row-main">
         <div className="wallet-row-name">
-          Sent {formatUnitsShort(BigInt(t.amount))} {t.symbol} via CCIP
+          {isSale(t) ? "Selling" : "Sent"} {formatUnitsShort(BigInt(t.amount))} {t.symbol} via CCIP
         </div>
         <div className="wallet-row-chains">
           <ChainBadge side={t.from} short /> <span className="muted">→</span> <ChainBadge side={t.to} short />
@@ -342,14 +360,16 @@ function TransferRow({ t, nowMs }: { t: BridgeTransfer; nowMs: number }) {
       </div>
       <div className="wallet-row-value">
         <span className={`wallet-status ${pending ? (slow ? "slow" : "pending") : "done"}`}>
-          {pending ? (slow ? "Taking longer" : "In transit") : "Arrived"}
+          {pending ? (slow ? "Taking longer" : "In transit") : isSale(t) ? `Order #${t.orderId}` : "Arrived"}
         </span>
         <div className="muted" style={{ fontSize: 12 }}>
           {pending
             ? slow
               ? "Explorer has the detail"
               : `~${Math.max(1, Math.round((EXPECTED_MS - elapsed) / 60_000))} min left`
-            : `in ${Math.max(1, Math.round((t.arrivedAt! - t.sentAt) / 60_000))} min`}
+            : isSale(t)
+              ? "sell order placed"
+              : `in ${Math.max(1, Math.round((t.arrivedAt! - t.sentAt) / 60_000))} min`}
         </div>
       </div>
       <a className="btn wallet-row-action" href={ccipExplorerTx(t.hash)} target="_blank" rel="noreferrer" title="Open in CCIP Explorer">

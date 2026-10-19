@@ -34,6 +34,14 @@ export interface BridgeTransfer {
   arrivedAt?: number;
   /** The destination transaction that minted it. */
   arrivalHash?: string;
+  /**
+   * "sell": the tokens went to the exchange, to be sold on arrival. It has
+   * arrived when the exchange holds a sell order for exactly that amount —
+   * nothing is minted to the wallet. Absent on a plain transfer.
+   */
+  kind?: "transfer" | "sell";
+  /** For a sale, the order it became. */
+  orderId?: number;
 }
 
 const KEY_PREFIX = "predictsafe.ccip:1:";
@@ -92,6 +100,49 @@ function update(account: string, hash: string, patch: Partial<BridgeTransfer>) {
 
 export const isPending = (t: BridgeTransfer) => t.arrivedAt === undefined;
 
+export const isSale = (t: BridgeTransfer) => t.kind === "sell";
+
+/** Records a sale's arrival: the order the exchange placed for it. */
+export function markSold(account: string, hash: string, orderId: number, at: number) {
+  update(account, hash, { arrivedAt: at, orderId });
+}
+
+/** The fields of an exchange order a sale is matched against. */
+export interface SellOrderLike {
+  id: number;
+  trader: string;
+  side: "buy" | "sell";
+  amountIn: bigint;
+  /** Unix seconds. */
+  placedAt: number;
+}
+
+/**
+ * The order a pending sale became, if the exchange has it: a sell by this
+ * wallet, of exactly the amount sent, placed after it was sent, and not
+ * already credited to another sale.
+ */
+export function findSellOrder(
+  t: BridgeTransfer,
+  account: string,
+  orders: readonly SellOrderLike[],
+  claimed: ReadonlySet<number>,
+): SellOrderLike | null {
+  const amount = BigInt(t.amount);
+  return (
+    [...orders]
+      .sort((a, b) => a.id - b.id)
+      .find(
+        (o) =>
+          o.side === "sell" &&
+          o.trader.toLowerCase() === account.toLowerCase() &&
+          o.amountIn === amount &&
+          o.placedAt * 1000 >= t.sentAt - 60_000 &&
+          !claimed.has(o.id),
+      ) ?? null
+  );
+}
+
 /** Past this, the page stops promising and points at CCIP Explorer instead. */
 export const SLOW_AFTER_MS = 45 * 60_000;
 
@@ -146,7 +197,8 @@ export async function checkArrivals(account: Address): Promise<number> {
   let arrived = 0;
   try {
     for (const side of ["base", "sepolia"] as CcipSide[]) {
-      const pending = read(account).filter((t) => isPending(t) && t.to === side);
+      // A sale arrives as an exchange order, not a mint: the wallet matches those.
+      const pending = read(account).filter((t) => isPending(t) && !isSale(t) && t.to === side);
       if (pending.length === 0) continue;
       const client = clientOn(side);
       const head = await client.getBlockNumber();

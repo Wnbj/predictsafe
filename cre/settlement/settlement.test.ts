@@ -27,6 +27,12 @@ import {
   onRequestDue,
   encodeKeeperReport,
   KEEPER_REQUESTS_PER_REPORT,
+  onScheduleMarkets,
+  nextSlot,
+  roundStrike,
+  scheduledQuestion,
+  encodeSchedulerReport,
+  SCHEDULE_MIN_STAKING_SECONDS,
 } from "./main"
 
 /**
@@ -716,5 +722,118 @@ describe("automatic settlement requester", () => {
   test("asks for no more than one report can carry", () => {
     expect(KEEPER_REQUESTS_PER_REPORT).toBeGreaterThan(0)
     expect(KEEPER_REQUESTS_PER_REPORT).toBeLessThanOrEqual(5)
+  })
+})
+
+/**
+ * The market opener. Every node must name the same market from the same DON
+ * time, so the slot arithmetic, the strike rounding and the question text are
+ * pinned here; whether a slot is already open is the contract's to decide.
+ */
+describe("scheduled markets", () => {
+  // Mon 2026-10-19 21:01:00 UTC — a run one minute into the hour.
+  const T = Date.UTC(2026, 9, 19, 21, 1, 0) / 1000
+  const hourly = { asset: "BTC" as const, horizonSeconds: 3600, closeBeforeSeconds: 900 }
+  const daily = { asset: "ETH" as const, horizonSeconds: 86400, closeBeforeSeconds: 4 * 3600 }
+
+  test("an hourly rule names the hour that ends next, closing 15 minutes before", () => {
+    expect(nextSlot(hourly, T)).toEqual({
+      expiryTime: Date.UTC(2026, 9, 19, 22, 0, 0) / 1000,
+      closeTime: Date.UTC(2026, 9, 19, 21, 45, 0) / 1000,
+    })
+  })
+
+  test("a daily rule names the next UTC midnight while its staking is open", () => {
+    const morning = Date.UTC(2026, 9, 19, 0, 1, 0) / 1000
+    expect(nextSlot(daily, morning)).toEqual({
+      expiryTime: Date.UTC(2026, 9, 20) / 1000,
+      closeTime: Date.UTC(2026, 9, 19, 20, 0, 0) / 1000,
+    })
+  })
+
+  test("once a slot's staking has closed, the next one opens rather than none", () => {
+    // 21:01, after today's 20:00 close: tomorrow's daily market, not a gap until midnight.
+    expect(nextSlot(daily, T)).toEqual({
+      expiryTime: Date.UTC(2026, 9, 21) / 1000,
+      closeTime: Date.UTC(2026, 9, 20, 20, 0, 0) / 1000,
+    })
+    // An hourly run that fires late, five minutes before the 21:45 close.
+    const late = Date.UTC(2026, 9, 19, 21, 40, 0) / 1000
+    expect(nextSlot(hourly, late)?.expiryTime).toBe(Date.UTC(2026, 9, 19, 23, 0, 0) / 1000)
+    const justInTime = Date.UTC(2026, 9, 19, 21, 45, 0) / 1000 - SCHEDULE_MIN_STAKING_SECONDS
+    expect(nextSlot(hourly, justInTime)?.expiryTime).toBe(Date.UTC(2026, 9, 19, 22, 0, 0) / 1000)
+  })
+
+  test("a rule with no room to stake opens nothing", () => {
+    expect(nextSlot({ asset: "BTC", horizonSeconds: 600, closeBeforeSeconds: 600 }, T)).toBeNull()
+  })
+
+  test("strikes round to the nearest step a person would type", () => {
+    expect(roundStrike(8_194_741_000_000n, 100)).toBe(8_190_000_000_000n) // $81,947.41 -> $81,900
+    expect(roundStrike(8_195_000_000_000n, 100)).toBe(8_200_000_000_000n) // halves round up
+    expect(roundStrike(239_556_705_611n, 10)).toBe(240_000_000_000n) // $2,395.57 -> $2,400
+  })
+
+  test("the question is the one the app's Create market form writes, in UTC", () => {
+    expect(scheduledQuestion("BTC", 8_190_000_000_000n, Date.UTC(2026, 9, 19, 22, 0, 0) / 1000)).toBe(
+      "Will BTC be at or above $81,900 at 22:00 UTC on Oct 19?",
+    )
+    expect(scheduledQuestion("ETH", 240_000_000_000n, Date.UTC(2026, 9, 20) / 1000)).toBe(
+      "Will ETH be at or above $2,400 at 00:00 UTC on Oct 20?",
+    )
+  })
+
+  test("encodes the specs exactly as MarketScheduler decodes them", () => {
+    const spec = {
+      asset: 0,
+      strike: 8_190_000_000_000n,
+      closeTime: 1_792_446_300n,
+      expiryTime: 1_792_447_200n,
+      question: "Will BTC be at or above $81,900 at 22:00 UTC on Oct 19?",
+    }
+    const [decoded] = decodeAbiParameters(
+      parseAbiParameters("(uint8 asset, uint64 strike, uint64 closeTime, uint64 expiryTime, string question)[]"),
+      encodeSchedulerReport([spec]),
+    )
+    expect(decoded).toEqual([spec])
+  })
+
+  const base = {
+    flightContractAddress: "0x0900000000000000000000000000000000000001",
+    chainSelectorName: "ethereum-testnet-sepolia",
+    apiUrl: "https://example.invalid",
+    apiKey: "unused",
+    gasLimit: "1000000",
+    cryptoContractAddress: "0x0900000000000000000000000000000000000002",
+    stockContractAddress: "0x0900000000000000000000000000000000000003",
+    reserveContractAddress: "0x0900000000000000000000000000000000000004",
+    sweepSchedule: "0 0,30 * * * *",
+    exchangeContractAddress: "0x0900000000000000000000000000000000000006",
+    exchangeSchedule: "0 5,15,25,35,45,55 * * * *",
+    keeperContractAddress: "0x0900000000000000000000000000000000000007",
+    keeperSchedule: "0 2,12,22,32,42,52 * * * *",
+  }
+  const fns = (extra: Record<string, string>) =>
+    initWorkflow({ ...base, ...extra } as Config).map((h) => h.fn)
+
+  test("is appended after the keeper, moving no existing index", () => {
+    const withScheduler = fns({
+      schedulerContractAddress: "0x0900000000000000000000000000000000000008",
+      schedulerSchedule: "0 1 * * * *",
+    })
+    const without = fns({})
+    expect(withScheduler.slice(0, without.length)).toEqual(without)
+    expect(without.at(-1)).toBe(onRequestDue)
+    expect(withScheduler.at(-1)).toBe(onScheduleMarkets)
+    expect(withScheduler).toHaveLength(without.length + 1)
+  })
+
+  test("is not registered without a schedule, or with the zero address", () => {
+    expect(fns({ schedulerContractAddress: "0x0900000000000000000000000000000000000008" })).not.toContain(
+      onScheduleMarkets,
+    )
+    expect(
+      fns({ schedulerContractAddress: "0x0000000000000000000000000000000000000000", schedulerSchedule: "0 1 * * * *" }),
+    ).not.toContain(onScheduleMarkets)
   })
 })

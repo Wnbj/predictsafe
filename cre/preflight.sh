@@ -122,6 +122,7 @@ for key, label in (
     ('ammContractAddress',     'amm    '),
     ('exchangeContractAddress', 'exchange'),
     ('keeperContractAddress',  'keeper '),
+    ('schedulerContractAddress', 'scheduler'),
 ):
     v = c.get(key) or ''
     if v:
@@ -156,6 +157,16 @@ for key, label in (('flightContractAddress','flight'), ('cryptoContractAddress',
     if v and v != '0x' + '0' * 40:
         print(f'{label}={v}')
 ")
+  echo
+fi
+
+# The scheduler opens markets on the crypto contract it was built with. One
+# pointed elsewhere opens them where no handler settles them.
+scheduler=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('schedulerContractAddress') or '')")
+if [ -n "$scheduler" ] && [ "$scheduler" != "0x0000000000000000000000000000000000000000" ]; then
+  crypto=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('cryptoContractAddress') or '')")
+  echo "  scheduler opens markets on the crypto contract"
+  check "markets" "$(cast call "$scheduler" 'markets()(address)' --rpc-url "$RPC" 2>&1)" "$crypto"
   echo
 fi
 

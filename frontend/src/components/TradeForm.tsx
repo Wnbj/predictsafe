@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { formatUnits, parseUnits, type Address } from "viem";
+import { formatEther, formatUnits, parseUnits, type Address } from "viem";
 import { writeWithApproval } from "../lib/approval";
 import { ASSET_IMAGES } from "../lib/categories";
 import { sendMint, waitForTx } from "../lib/chain";
@@ -18,6 +18,18 @@ import {
 } from "../lib/exchange";
 import { formatToken } from "../lib/format";
 import { formatUnitsShort } from "./walletParts";
+import {
+  BASE_NETWORK,
+  bridgeFee,
+  CCIP_CHAINS,
+  ccipExplorerTx,
+  ccipSendCall,
+  ensureWalletOn,
+  readBridgeSide,
+  sellOnArrival,
+  type CcipSide,
+} from "../lib/ccip";
+import { destinationHead, recordTransfer } from "../lib/transfers";
 
 const PERCENTS = [25, 50, 75] as const;
 
@@ -75,15 +87,23 @@ export function TradeForm({
   const [phase, setPhase] = useState<Phase>("form");
   const [error, setError] = useState<string | null>(null);
   const [minting, setMinting] = useState(false);
-  const [placed, setPlaced] = useState<{ side: OrderSide; text: string } | null>(null);
+  const [placed, setPlaced] = useState<{ side: OrderSide; text: string; ccipHash?: string } | null>(null);
+  /**
+   * Where a sale's tokens come from. From Base Sepolia the tokens travel to
+   * the exchange over CCIP with the sale attached, and the order is placed
+   * when they land — one signature instead of "bring back, wait, sell".
+   */
+  const [from, setFrom] = useState<CcipSide>("sepolia");
+  const [ccipFee, setCcipFee] = useState<bigint | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const asset = state.assets.find((a) => a.id === assetId) ?? state.assets[0]!;
   const symbol = `s${asset.symbol}`;
   const buying = side === "buy";
   const decimals = buying ? TOKEN_DECIMALS : ASSET_TOKEN_DECIMALS;
-  const available = buying ? usdc.balance : asset.balance;
   const onBase = baseBalances?.[symbol] ?? 0n;
+  const fromBase = !buying && from === "base";
+  const available = buying ? usdc.balance : fromBase ? onBase : asset.balance;
   const m = marketState(asset, now);
   const busy = phase === "approving" || phase === "wallet" || phase === "confirming";
 
@@ -120,6 +140,36 @@ export function TradeForm({
     inputRef.current?.focus();
   }, [side, assetId, onClose]);
 
+  // A sale starts where the tokens are: Base, if that is the only place.
+  useEffect(() => {
+    setFrom(side === "sell" && asset.balance === 0n && onBase > 0n ? "base" : "sepolia");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [side, assetId]);
+
+  // The CCIP fee for a sale from Base, quoted a moment after typing stops.
+  useEffect(() => {
+    setCcipFee(null);
+    if (!fromBase || !valid || amount === null) return;
+    let live = true;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const b = await readBridgeSide("base", symbol, account);
+          if (!b) return;
+          const f = await bridgeFee("base", EXCHANGE_ADDRESS, b.token, amount, sellOnArrival(account));
+          if (live) setCcipFee(f);
+        } catch {
+          /* shown as "quoting" */
+        }
+      })();
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromBase, text, symbol, account]);
+
   const switchSide = (s: OrderSide) => {
     setSide(s);
     setText("");
@@ -149,8 +199,56 @@ export function TradeForm({
     }
   };
 
+  const sellFromBase = async (amount: bigint) => {
+    setPhase("wallet");
+    setError(null);
+    try {
+      await ensureWalletOn("base");
+      const b = await readBridgeSide("base", symbol, account);
+      if (!b) throw new Error("This token is not deployed on Base Sepolia.");
+      const call = sellOnArrival(account);
+      const [fee, head] = await Promise.all([
+        bridgeFee("base", EXCHANGE_ADDRESS, b.token, amount, call),
+        destinationHead("sepolia"),
+      ]);
+      const hash = await writeWithApproval({
+        account,
+        spender: CCIP_CHAINS.base.router,
+        amount,
+        allowance: b.allowance,
+        token: b.token,
+        call: ccipSendCall("base", EXCHANGE_ADDRESS, b.token, amount, fee, call),
+        label: "CCIP sale",
+        network: BASE_NETWORK,
+        onApproving: () => setPhase("approving"),
+        onSubmitted: () => setPhase("confirming"),
+      });
+      recordTransfer(account, {
+        hash,
+        from: "base",
+        to: "sepolia",
+        symbol,
+        amount: amount.toString(),
+        sentAt: Date.now(),
+        destFromBlock: head.toString(),
+        scannedTo: head.toString(),
+        kind: "sell",
+      });
+      setPlaced({ side: "sell", text: `${formatUnitsShort(amount)} ${symbol}`, ccipHash: hash });
+      setPhase("done");
+      await onDone();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(/insufficient funds/i.test(msg) ? "Not enough Base Sepolia ETH for gas and the CCIP fee." : exchangeError(e));
+      setPhase("form");
+    } finally {
+      void ensureWalletOn("sepolia").catch(() => {});
+    }
+  };
+
   const place = async () => {
     if (!valid || amount === null) return;
+    if (fromBase) return sellFromBase(amount);
     setPhase("wallet");
     setError(null);
     try {
@@ -180,7 +278,7 @@ export function TradeForm({
     <>
       <div className="modal-head">
         <div className="heading" style={{ fontSize: 18 }}>
-          {phase === "done" ? "Order placed" : buying ? `Buy ${symbol}` : `Sell ${symbol}`}
+          {phase === "done" ? (placed?.ccipHash ? "Sale on its way" : "Order placed") : buying ? `Buy ${symbol}` : `Sell ${symbol}`}
         </div>
         {onClose && (
           <button className="modal-close" aria-label="Close" onClick={onClose} disabled={signing}>
@@ -193,12 +291,33 @@ export function TradeForm({
         <div className="bridge-done">
           <div className="bridge-done-icon" aria-hidden="true">{placed.side === "buy" ? "+" : "−"}</div>
           <div>
-            {placed.side === "buy" ? "Buy" : "Sell"} order for <b>{placed.text}</b> is in.
+            {placed.ccipHash ? (
+              <>
+                Sale of <b>{placed.text}</b> sent from Base Sepolia.
+              </>
+            ) : (
+              <>
+                {placed.side === "buy" ? "Buy" : "Sell"} order for <b>{placed.text}</b> is in.
+              </>
+            )}
           </div>
-          <div className="muted" style={{ fontSize: 13 }}>
-            It fills at the next new {asset.name.toLowerCase()} price — {m.expectedWait}. The Chainlink DON fills it
-            on its own; nothing more to sign. Follow it in the wallet's Activity.
-          </div>
+          {placed.ccipHash ? (
+            <>
+              <div className="muted" style={{ fontSize: 13 }}>
+                The tokens are on their way to the exchange over Chainlink CCIP — usually 15 to 30 minutes. The
+                sell order is placed the moment they land and fills at the next new price after that, paid in
+                mUSDC on Sepolia. Nothing more to sign; follow it in the wallet's Activity.
+              </div>
+              <a className="btn" href={ccipExplorerTx(placed.ccipHash)} target="_blank" rel="noreferrer">
+                Track on CCIP Explorer ↗
+              </a>
+            </>
+          ) : (
+            <div className="muted" style={{ fontSize: 13 }}>
+              It fills at the next new {asset.name.toLowerCase()} price — {m.expectedWait}. The Chainlink DON fills
+              it on its own; nothing more to sign. Follow it in the wallet's Activity.
+            </div>
+          )}
           <button
             className="btn btn-accent"
             onClick={() => {
@@ -240,6 +359,31 @@ export function TradeForm({
               </button>
             ))}
           </div>
+
+          {!buying && onBase > 0n && (
+            <div className="trade-source">
+              <span className="muted">Sell from</span>
+              <div className="seg">
+                {(["sepolia", "base"] as const).map((c) => (
+                  <button
+                    key={c}
+                    className={from === c ? "active" : ""}
+                    disabled={busy}
+                    onClick={() => {
+                      setFrom(c);
+                      setText("");
+                      setError(null);
+                    }}
+                  >
+                    {c === "sepolia" ? "Sepolia" : "Base via CCIP"}
+                    <span className="muted-strong" style={{ fontSize: 11, marginLeft: 6 }}>
+                      {fmt(c === "sepolia" ? asset.balance : onBase)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <div className={`bridge-amount${tooMuch ? " invalid" : ""}`}>
@@ -296,9 +440,23 @@ export function TradeForm({
               <dt>Fee (0.3%)</dt>
               <dd>{buy ? formatToken(buy.fee) : sell ? formatToken(sell.fee) : "—"}</dd>
             </div>
+            {fromBase && (
+              <>
+                <div>
+                  <dt>CCIP fee (Base Sepolia ETH)</dt>
+                  <dd>{ccipFee !== null ? Number(formatEther(ccipFee)).toPrecision(2) : valid ? "quoting…" : "—"}</dd>
+                </div>
+                <div>
+                  <dt>Reaches the exchange</dt>
+                  <dd>in about 15–30 min</dd>
+                </div>
+              </>
+            )}
             <div>
               <dt>Fills</dt>
-              <dd style={{ textAlign: "right" }}>{m.moving ? m.expectedWait : "when the price moves"}</dd>
+              <dd style={{ textAlign: "right" }}>
+                {fromBase ? "at the next new price after it lands" : m.moving ? m.expectedWait : "when the price moves"}
+              </dd>
             </div>
           </dl>
 
@@ -309,11 +467,12 @@ export function TradeForm({
                 : "The market is closed and the price is not moving. The order waits for the first new price after it reopens."}
             </div>
           )}
-          {!buying && available === 0n && onBase > 0n && (
-            <div className="muted" style={{ fontSize: 13 }}>
-              Your {fmt(onBase)} {symbol} is on Base Sepolia; the exchange is on Sepolia.{" "}
+          {fromBase && (
+            <div className="muted" style={{ fontSize: 12 }}>
+              One signature on Base Sepolia: the tokens travel to the exchange with the sale attached — a CCIP
+              programmable token transfer. Your wallet switches to Base Sepolia to sign, then back.{" "}
               <button className="linklike" style={{ color: "var(--color-accent)" }} onClick={() => onTransferBack(symbol)}>
-                Bring it back with CCIP →
+                Only bring them back instead →
               </button>
             </div>
           )}
@@ -336,12 +495,16 @@ export function TradeForm({
               : phase === "wallet"
                 ? "Confirm in your wallet…"
                 : phase === "confirming"
-                  ? "Waiting for Sepolia…"
+                  ? fromBase
+                    ? "Waiting for Base Sepolia…"
+                    : "Waiting for Sepolia…"
                   : !valid
                     ? "Enter an amount"
                     : buying
                       ? `Buy ${symbol} for ${formatToken(amount!)}`
-                      : `Sell ${fmt(amount!)} ${symbol}`}
+                      : fromBase
+                        ? `Sell ${fmt(amount!)} ${symbol} from Base`
+                        : `Sell ${fmt(amount!)} ${symbol}`}
           </button>
           <div className="muted-strong" style={{ fontSize: 11, textAlign: "center" }}>
             An estimate, not a quote: the order fills at the first new Chainlink price after it lands.

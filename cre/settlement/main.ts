@@ -132,7 +132,28 @@ export type Config = {
   keeperContractAddress?: string
   /** Cron schedule for asking the keeper what is due, six-field form. */
   keeperSchedule?: string
+  /**
+   * MarketScheduler address. Empty, or the zero address, leaves the market
+   * opener unregistered — markets are then opened only by people.
+   */
+  schedulerContractAddress?: string
+  /** Cron schedule for opening scheduled markets, six-field form. */
+  schedulerSchedule?: string
+  /** Which markets to keep open — see `nextSlot`. */
+  marketSchedules?: MarketScheduleRule[]
+  /** Chainlink Data Feeds the strikes are taken from, by asset. */
+  priceFeeds?: Partial<Record<ScheduledAsset, string>>
   gasLimit: string
+}
+
+export type ScheduledAsset = "BTC" | "ETH"
+
+export interface MarketScheduleRule {
+  asset: ScheduledAsset
+  /** Slot length: a market expires at every multiple of this, in UTC. */
+  horizonSeconds: number
+  /** Staking closes this long before expiry. */
+  closeBeforeSeconds: number
 }
 
 const OUTCOME_YES = 1
@@ -2097,6 +2118,199 @@ export const onRequestDue = (runtime: Runtime<Config>): string => {
   return txHash
 }
 
+// --- markets that open themselves --------------------------------------------
+
+/**
+ * Keeps the board from going empty. On a schedule, for each rule — "a BTC
+ * market every hour", "an ETH market every day" — this handler works out the
+ * slot that ends next, skips it if MarketScheduler already opened it, takes a
+ * strike from the asset's Chainlink Data Feed rounded to a number a person
+ * would type, and reports the terms. The contract opens the market through
+ * the same public `newMarket` the app's "Create market" uses, and the keeper
+ * and the crypto handler settle it like any other.
+ *
+ * Every node must name the same market, so time comes from `runtime.now()` —
+ * DON time — and the price from the finalized block. A strike a few minutes
+ * stale is still near the money, which is all it is for.
+ */
+const schedulerAbi = [
+  {
+    type: "function",
+    name: "scheduled",
+    stateMutability: "view",
+    inputs: [
+      { name: "asset", type: "uint8" },
+      { name: "closeTime", type: "uint64" },
+      { name: "expiryTime", type: "uint64" },
+    ],
+    outputs: [
+      { name: "exists", type: "bool" },
+      { name: "marketId", type: "uint256" },
+    ],
+  },
+] as const
+
+/** CryptoMarket.Asset, in the contract's order. */
+const SCHEDULED_ASSET_INDEX: Record<ScheduledAsset, number> = { BTC: 0, ETH: 1 }
+
+/** Strikes snap to these, as in the app's Create market form. */
+export const SCHEDULED_STRIKE_STEP: Record<ScheduledAsset, number> = { BTC: 100, ETH: 10 }
+
+/**
+ * A slot with less than this left to stake is passed over for the next one —
+ * a run that fires late opens a market people can still reach. The contract
+ * enforces its own, shorter, minimum.
+ */
+export const SCHEDULE_MIN_STAKING_SECONDS = 10 * 60
+
+const SCHEDULER_GAS_LIMIT = "1500000"
+
+/**
+ * The soonest slot after `nowSeconds` that still leaves time to stake: the one
+ * ending next, or — once its staking has closed — the one after it. So a
+ * daily market whose staking shut at 20:00 is followed by tomorrow's at the
+ * next run, rather than leaving the board without one until midnight. Null
+ * only for a rule whose staking window is shorter than the minimum.
+ */
+export const nextSlot = (
+  rule: MarketScheduleRule,
+  nowSeconds: number,
+): { closeTime: number; expiryTime: number } | null => {
+  const h = rule.horizonSeconds
+  const first = Math.floor(nowSeconds / h) * h + h
+  for (const expiryTime of [first, first + h]) {
+    const closeTime = expiryTime - rule.closeBeforeSeconds
+    if (closeTime - nowSeconds >= SCHEDULE_MIN_STAKING_SECONDS) return { closeTime, expiryTime }
+  }
+  return null
+}
+
+/** An 8-decimal feed answer, rounded to the nearest `step` dollars, still 8 decimals. */
+export const roundStrike = (answer: bigint, step: number): bigint => {
+  const unit = BigInt(step) * 100_000_000n
+  return ((answer + unit / 2n) / unit) * unit
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+/** "83300" -> "83,300", without Intl, which the workflow runtime may not have. */
+const thousands = (n: bigint): string => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+
+/** The same words the app's Create market form writes, in UTC. */
+export const scheduledQuestion = (asset: ScheduledAsset, strike: bigint, expiryTime: number): string => {
+  const d = new Date(expiryTime * 1000)
+  const hh = String(d.getUTCHours()).padStart(2, "0")
+  const mm = String(d.getUTCMinutes()).padStart(2, "0")
+  return `Will ${asset} be at or above $${thousands(strike / 100_000_000n)} at ${hh}:${mm} UTC on ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}?`
+}
+
+export interface ScheduledSpec {
+  asset: number
+  strike: bigint
+  closeTime: bigint
+  expiryTime: bigint
+  question: string
+}
+
+/** The report `MarketScheduler._processReport` decodes: `abi.encode(Spec[])`. */
+export const encodeSchedulerReport = (specs: readonly ScheduledSpec[]): `0x${string}` =>
+  encodeAbiParameters(
+    parseAbiParameters("(uint8 asset, uint64 strike, uint64 closeTime, uint64 expiryTime, string question)[]"),
+    [specs.map((s) => ({ ...s }))],
+  )
+
+export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
+  const address = runtime.config.schedulerContractAddress ?? ""
+  if (address === "" || address === ZERO_ADDRESS) return "no scheduler configured"
+  const rules = runtime.config.marketSchedules ?? []
+  const nowSeconds = Math.floor(runtime.now().getTime() / 1000)
+
+  const candidates = rules.flatMap((rule) => {
+    const slot = nextSlot(rule, nowSeconds)
+    return slot ? [{ rule, ...slot }] : []
+  })
+  if (candidates.length === 0) return "no slot to open"
+
+  const evmClient = sweepEvm(runtime)
+  const reads = newReadBudget()
+  const atBlock = finalizedBlock(runtime, evmClient, reads)
+
+  const open = candidates.filter((c) => {
+    const [exists] = decodeFunctionResult({
+      abi: schedulerAbi,
+      functionName: "scheduled",
+      data: ethCall(
+        runtime,
+        evmClient,
+        address,
+        encodeFunctionData({
+          abi: schedulerAbi,
+          functionName: "scheduled",
+          args: [SCHEDULED_ASSET_INDEX[c.rule.asset], BigInt(c.closeTime), BigInt(c.expiryTime)],
+        }),
+        atBlock,
+        reads,
+      ),
+    }) as readonly [boolean, bigint]
+    return !exists
+  })
+  if (open.length === 0) {
+    runtime.log(`Scheduler at block ${atBlock}: every slot already open`)
+    return "every slot already open"
+  }
+
+  const prices = new Map<ScheduledAsset, bigint>()
+  const priceOf = (asset: ScheduledAsset): bigint => {
+    const known = prices.get(asset)
+    if (known !== undefined) return known
+    const feed = runtime.config.priceFeeds?.[asset] ?? ""
+    if (feed === "") throw new Error(`No price feed configured for ${asset}`)
+    const [, answer] = decodeFunctionResult({
+      abi: feedAbi,
+      functionName: "latestRoundData",
+      data: ethCall(
+        runtime,
+        evmClient,
+        feed,
+        encodeFunctionData({ abi: feedAbi, functionName: "latestRoundData" }),
+        atBlock,
+        reads,
+      ),
+    }) as readonly [bigint, bigint, bigint, bigint, bigint]
+    if (answer <= 0n) throw new Error(`${asset} feed returned no price`)
+    prices.set(asset, answer)
+    return answer
+  }
+
+  const specs: ScheduledSpec[] = open.map((c) => {
+    const strike = roundStrike(priceOf(c.rule.asset), SCHEDULED_STRIKE_STEP[c.rule.asset])
+    return {
+      asset: SCHEDULED_ASSET_INDEX[c.rule.asset],
+      strike,
+      closeTime: BigInt(c.closeTime),
+      expiryTime: BigInt(c.expiryTime),
+      question: scheduledQuestion(c.rule.asset, strike, c.expiryTime),
+    }
+  })
+
+  for (const s of specs) runtime.log(`Scheduler opening: ${s.question} (closes ${s.closeTime})`)
+  const signedReport = runtime.report(prepareReportRequest(encodeSchedulerReport(specs))).result()
+  const txResult = evmClient
+    .writeReport(runtime, {
+      receiver: address,
+      report: signedReport,
+      gasConfig: { gasLimit: SCHEDULER_GAS_LIMIT },
+    })
+    .result()
+
+  if (txResult.txStatus !== TxStatus.SUCCESS) {
+    throw new Error(`Scheduler write failed: ${txResult.errorMessage || txResult.txStatus}`)
+  }
+  const txHash = bytesToHex(txResult.txHash ?? new Uint8Array(32))
+  runtime.log(`Opened ${specs.length} market(s) in tx ${txHash}`)
+  return txHash
+}
+
 // --- reserve settlement, from a Chainlink PoR / NAV feed ---------------------
 //
 // Deliberately not a flag on the stock path. The equity rule — void unless the
@@ -2382,6 +2596,14 @@ export const initWorkflow = (config: Config) => {
   if (keeper !== "" && keeper !== ZERO_ADDRESS && config.keeperSchedule) {
     handlers.push(
       handler(new CronCapability().trigger({ schedule: config.keeperSchedule }), onRequestDue),
+    )
+  }
+
+  // The market opener, appended for the same reason.
+  const scheduler = config.schedulerContractAddress ?? ""
+  if (scheduler !== "" && scheduler !== ZERO_ADDRESS && config.schedulerSchedule) {
+    handlers.push(
+      handler(new CronCapability().trigger({ schedule: config.schedulerSchedule }), onScheduleMarkets),
     )
   }
 

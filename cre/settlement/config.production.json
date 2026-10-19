@@ -12,8 +12,36 @@
   "reserveContractAddress": "0xa768Be2741A0464b81606649eCa45bfF7aD4d939",
   "ammContractAddress": "0xc9961096dc98eE17eD28bB417BB726F1b64f84FF",
   "sweepSchedule": "0 0,30 * * * *",
-  "exchangeContractAddress": "0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2",
+  "exchangeContractAddress": "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340",
   "exchangeSchedule": "0 5,15,25,35,45,55 * * * *",
   "keeperContractAddress": "0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43",
-  "keeperSchedule": "0 2,12,22,32,42,52 * * * *"
+  "keeperSchedule": "0 2,12,22,32,42,52 * * * *",
+  "schedulerContractAddress": "0x8559a6e035bEC9F85369B9736054092ff579B01e",
+  "schedulerSchedule": "0 1 * * * *",
+  "marketSchedules": [
+    {
+      "asset": "BTC",
+      "horizonSeconds": 3600,
+      "closeBeforeSeconds": 900
+    },
+    {
+      "asset": "ETH",
+      "horizonSeconds": 14400,
+      "closeBeforeSeconds": 3600
+    },
+    {
+      "asset": "BTC",
+      "horizonSeconds": 86400,
+      "closeBeforeSeconds": 14400
+    },
+    {
+      "asset": "ETH",
+      "horizonSeconds": 86400,
+      "closeBeforeSeconds": 14400
+    }
+  ],
+  "priceFeeds": {
+    "BTC": "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
+    "ETH": "0x694AA1769357215DE4FAC081bf1f309aDC325306"
+  }
 }

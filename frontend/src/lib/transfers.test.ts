@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { findArrival, isPending, recordTransfer, subscribeTransfers, transfersFor, type BridgeTransfer, type Mint } from "./transfers";
+import { findArrival, findSellOrder, isPending, recordTransfer, subscribeTransfers, transfersFor, type BridgeTransfer, type Mint } from "./transfers";
 
 /**
  * A CCIP transfer outlives the page that sent it. What matters: it survives a
@@ -102,5 +102,36 @@ describe("findArrival", () => {
     // Sepolia mints the same token when an order fills. One before the send
     // with the same amount must not end a transfer that has not landed.
     expect(findArrival(transfer({ destFromBlock: "200" }), [mint(150n, amount)], new Set())).toBeNull();
+  });
+});
+
+describe("findSellOrder", () => {
+  const me = "0x00000000000000000000000000000000000a11ce";
+  const sale = transfer({ kind: "sell", amount: "500", sentAt: 1_000_000 });
+  const order = (id: number, over: Partial<{ trader: string; side: "buy" | "sell"; amountIn: bigint; placedAt: number }> = {}) => ({
+    id,
+    trader: me,
+    side: "sell" as const,
+    amountIn: 500n,
+    placedAt: 1_000 + 900, // fifteen minutes after sending, in seconds
+    ...over,
+  });
+
+  it("is this wallet's sell of exactly the amount, placed after sending", () => {
+    expect(findSellOrder(sale, me, [order(1)], new Set())?.id).toBe(1);
+  });
+
+  it("ignores buys, other wallets, other amounts and orders from before the send", () => {
+    const others = [
+      order(1, { side: "buy" }),
+      order(2, { trader: "0x00000000000000000000000000000000000000b0" }),
+      order(3, { amountIn: 499n }),
+      order(4, { placedAt: 100 }),
+    ];
+    expect(findSellOrder(sale, me, others, new Set())).toBeNull();
+  });
+
+  it("skips an order already credited to another sale", () => {
+    expect(findSellOrder(sale, me, [order(1), order(2)], new Set([1]))?.id).toBe(2);
   });
 });

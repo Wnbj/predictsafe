@@ -87,9 +87,13 @@ to the node directly. Setup is in RUNBOOK under "Hosting the frontend".
 exchange tokens' addresses on Base Sepolia, and builds `ccipSend` calls with the
 fee in native gas. `components/Wallet.tsx` is the portfolio's wallet card —
 balances per chain, total in dollars, Assets and Activity tabs — and
-`BridgeDialog.tsx` the send. `lib/transfers.ts` keeps sent transfers in
+`BridgeDialog.tsx` the send. Selling from Base is a third case, in
+`TradeForm.tsx`: one `ccipSend` to the exchange with the seller as data and a
+gas limit for `ccipReceive`, so the order is placed on arrival
+(`sellOnArrival` in `lib/ccip.ts`). `lib/transfers.ts` keeps sent transfers in
 localStorage and marks one arrived when the destination token mints exactly
-that amount to the wallet after the send. Base Sepolia is read straight from
+that amount to the wallet after the send — or, for a sale, when the exchange
+holds a sell order for exactly that amount. Base Sepolia is read straight from
 its public RPC (`https://sepolia.base.org`, which answers browser origins but
 caps `eth_getLogs` at 200 blocks); Sepolia still goes through the paced queue.
 `writeWithApproval` and `waitForTx` take a token and a `TxNetwork`, so the same

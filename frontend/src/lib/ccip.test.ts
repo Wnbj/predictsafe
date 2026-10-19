@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decodeAbiParameters, zeroAddress } from "viem";
-import { bridgeMessage, CCIP_CHAINS, ccipSendCall, tokenOn } from "./ccip";
+import { bridgeMessage, CCIP_CHAINS, ccipSendCall, gasLimitArgs, sellOnArrival, tokenOn } from "./ccip";
 
 /**
  * The message the router is asked to carry. What matters: the receiver is the
@@ -41,5 +41,26 @@ describe("tokenOn", () => {
   it("finds the exchange's tokens on Sepolia by symbol", () => {
     expect(tokenOn("sepolia", "sXAU")).toBe(TOKEN);
     expect(tokenOn("sepolia", "nope")).toBeNull();
+  });
+});
+
+describe("selling on arrival", () => {
+  it("carries the seller as data and asks for gas to run the exchange's ccipReceive", () => {
+    const m = bridgeMessage("0xaf764C8D21b2f057E5864125f9DB9c271ADfa340", TOKEN, 5n, sellOnArrival(ME));
+    expect(decodeAbiParameters([{ type: "address" }], m.data)[0].toLowerCase()).toBe(ME);
+    expect(m.extraArgs.slice(0, 10)).toBe("0x181dcf10");
+    const [gas, ooo] = decodeAbiParameters([{ type: "uint256" }, { type: "bool" }], `0x${m.extraArgs.slice(10)}`);
+    expect(gas).toBe(400_000n);
+    expect(ooo).toBe(true);
+  });
+
+  it("a plain transfer sends no data and no gas, so no receiver code runs", () => {
+    const m = bridgeMessage(ME, TOKEN, 5n);
+    expect(m.data).toBe("0x");
+    expect(m.extraArgs).toBe("0x");
+  });
+
+  it("encodes the tag and two words", () => {
+    expect(gasLimitArgs(1n)).toHaveLength(2 + 8 + 128);
   });
 });

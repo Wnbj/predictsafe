@@ -8,6 +8,8 @@ import {AssetExchange, ISyntheticToken, IPriceFeed} from "../src/AssetExchange.s
 import {CrossChainToken} from "@chainlink/contracts-ccip/contracts/tokens/CrossChainToken.sol";
 import {BaseERC20} from "@chainlink/contracts-ccip/contracts/tokens/BaseERC20.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
+import {Client} from "@chainlink/contracts-ccip/contracts/libraries/Client.sol";
+import {IAny2EVMMessageReceiver} from "@chainlink/contracts-ccip/contracts/interfaces/IAny2EVMMessageReceiver.sol";
 
 /// A feed whose rounds the test publishes by hand, numbered the way a real
 /// aggregator proxy numbers them: phase in the top 16 bits, round below.
@@ -56,6 +58,8 @@ contract AssetExchangeTest is Test {
     address internal forwarder = address(0xF0);
     address internal alice = address(0xA11CE);
     address internal bob = address(0xB0B);
+    address internal router = address(0xC0C1);
+    uint64 internal constant BASE = 10344971235874465080;
 
     string internal constant WF = "predictsafe-settlement";
 
@@ -76,12 +80,13 @@ contract AssetExchangeTest is Test {
         gold = new MockFeed(8);
         gold.push(P0);
 
-        ex = new AssetExchange(IERC20(address(usdc)), forwarder);
+        ex = new AssetExchange(IERC20(address(usdc)), forwarder, router);
         ex.setExpectedAuthor(address(this));
         ex.setExpectedWorkflowName(WF);
         sXAU = _token("Synthetic Gold", "sXAU");
         sXAU.grantMintAndBurnRoles(address(ex));
         ex.listAsset("XAU", gold, ISyntheticToken(address(sXAU)));
+        ex.setCcipSource(BASE, true);
 
         usdc.mint(address(this), 100_000e6);
         usdc.approve(address(ex), type(uint256).max);
@@ -421,5 +426,105 @@ contract AssetExchangeTest is Test {
         vm.prank(alice);
         vm.expectRevert(AssetExchange.AssetInactive.selector);
         ex.placeBuy(0, 100e6);
+    }
+
+    // --- sales that arrive over CCIP ------------------------------------------
+
+    /// What the off-ramp does: the pool mints the tokens to the receiver, then
+    /// the router calls `ccipReceive` with them listed.
+    function _arrive(address token, uint256 amount, address sender, bytes memory data, uint64 source)
+        internal
+        returns (Client.Any2EVMMessage memory m)
+    {
+        CrossChainToken(token).grantMintAndBurnRoles(address(this));
+        CrossChainToken(token).mint(address(ex), amount);
+        Client.EVMTokenAmount[] memory sent = new Client.EVMTokenAmount[](1);
+        sent[0] = Client.EVMTokenAmount({token: token, amount: amount});
+        m = Client.Any2EVMMessage({
+            messageId: keccak256("m"),
+            sourceChainSelector: source,
+            sender: abi.encode(sender),
+            data: data,
+            destTokenAmounts: sent
+        });
+    }
+
+    function test_ccip_aSaleArrivesAsAnOrderForTheNamedTrader() public {
+        Client.Any2EVMMessage memory m = _arrive(address(sXAU), 1e18, bob, abi.encode(alice), BASE);
+        uint256 supply = sXAU.totalSupply();
+        vm.prank(router);
+        ex.ccipReceive(m);
+
+        AssetExchange.Order memory o = ex.order(0);
+        assertEq(o.trader, alice, "data names the trader");
+        assertEq(uint8(o.side), uint8(AssetExchange.Side.Sell));
+        assertEq(o.amountIn, 1e18);
+        assertEq(sXAU.balanceOf(address(ex)), 0, "burned on arrival, like placeSell");
+        assertEq(sXAU.totalSupply(), supply - 1e18);
+
+        _later();
+        gold.push(P1);
+        uint256 before = usdc.balanceOf(alice);
+        ex.fill(_ids(0));
+        uint256 gross = 1e18 * uint256(P1) / 1e20;
+        assertEq(usdc.balanceOf(alice) - before, gross - gross * 30 / 10_000, "paid on Sepolia at the next new price");
+    }
+
+    function test_ccip_withoutDataTheSenderIsTheTrader() public {
+        Client.Any2EVMMessage memory m = _arrive(address(sXAU), 1e18, bob, "", BASE);
+        vm.prank(router);
+        ex.ccipReceive(m);
+        assertEq(ex.order(0).trader, bob);
+    }
+
+    function test_ccip_onlyTheRouterDelivers() public {
+        Client.Any2EVMMessage memory m = _arrive(address(sXAU), 1e18, bob, "", BASE);
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(AssetExchange.NotCcipRouter.selector, alice));
+        ex.ccipReceive(m);
+    }
+
+    function test_ccip_onlyAllowedSourceChains() public {
+        Client.Any2EVMMessage memory m = _arrive(address(sXAU), 1e18, bob, "", 42);
+        vm.prank(router);
+        vm.expectRevert(abi.encodeWithSelector(AssetExchange.CcipSourceNotAllowed.selector, uint64(42)));
+        ex.ccipReceive(m);
+    }
+
+    function test_ccip_aTokenThatCannotBeSoldGoesToTheSender() public {
+        CrossChainToken other = _token("Other", "OTH");
+        Client.Any2EVMMessage memory m = _arrive(address(other), 5e18, bob, "", BASE);
+        vm.prank(router);
+        ex.ccipReceive(m);
+        assertEq(other.balanceOf(bob), 5e18, "handed over, not stuck in a failed message");
+        assertEq(ex.orderCount(), 0);
+    }
+
+    function test_ccip_anInactiveAssetIsReturnedNotSold() public {
+        ex.setAssetActive(0, false);
+        Client.Any2EVMMessage memory m = _arrive(address(sXAU), 1e18, bob, abi.encode(alice), BASE);
+        vm.prank(router);
+        ex.ccipReceive(m);
+        assertEq(sXAU.balanceOf(alice), 1e18);
+        assertEq(ex.orderCount(), 0);
+    }
+
+    function test_ccip_saysItCanReceive() public view {
+        assertTrue(ex.supportsInterface(type(IAny2EVMMessageReceiver).interfaceId));
+        assertTrue(ex.supportsInterface(0x01ffc9a7), "ERC-165 itself");
+    }
+
+    function test_ccip_sourceListIsOwnerOnly() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        ex.setCcipSource(1, true);
+    }
+
+    function test_ccip_receiveFitsTheGasTheAppSends() public {
+        Client.Any2EVMMessage memory m = _arrive(address(sXAU), 1e18, bob, abi.encode(alice), BASE);
+        vm.prank(router);
+        uint256 g = gasleft();
+        ex.ccipReceive(m);
+        assertLt(g - gasleft(), 300_000, "the app asks for 400k on the destination");
     }
 }

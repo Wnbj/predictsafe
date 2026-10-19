@@ -94,7 +94,7 @@ contract DeployExchangeSepolia is CctSteps {
         CrossChainToken sXAU = _token("Synthetic Gold", "sXAU", me);
         CrossChainToken sCSPX = _token("Synthetic S&P 500 ETF", "sCSPX", me);
 
-        AssetExchange ex = new AssetExchange(IERC20(usdc), vm.envAddress("FORWARDER"));
+        AssetExchange ex = new AssetExchange(IERC20(usdc), vm.envAddress("FORWARDER"), ROUTER);
         // Author before name: a name with no author makes onReport revert.
         ex.setExpectedAuthor(vm.envAddress("WORKFLOW_AUTHOR"));
         ex.setExpectedWorkflowName(vm.envString("WORKFLOW_NAME"));
@@ -177,5 +177,53 @@ contract ConnectPools is Script {
         });
         TokenPool(localPool).applyChainUpdates(new uint64[](0), add);
         console2.log("connected", localPool, "->", remotePool);
+    }
+}
+
+/**
+ * Sepolia, 2026-10-19: a new exchange on the SAME tokens, able to take a sale
+ * that arrives over CCIP (AssetExchange.ccipReceive). The tokens are separate
+ * contracts since the CCT rebuild, so balances on both chains carry over; the
+ * old exchange loses its mint and burn roles, so it can no longer issue or
+ * take back a token. It had no pending orders when this ran.
+ *
+ * Required env: DEPLOYER_PK, TOKEN (MockUSDC), FORWARDER, WORKFLOW_NAME,
+ * WORKFLOW_AUTHOR, OLD_EXCHANGE. Optional: RESERVE (default 10,000 mUSDC).
+ */
+contract DeployExchangeV3 is Script {
+    address constant ROUTER = 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59;
+    uint64 constant BASE_SEPOLIA = 10344971235874465080;
+
+    function run() external {
+        uint256 pk = vm.envUint("DEPLOYER_PK");
+        address me = vm.addr(pk);
+        address usdc = vm.envAddress("TOKEN");
+        AssetExchange old = AssetExchange(vm.envAddress("OLD_EXCHANGE"));
+        uint256 reserve = vm.envOr("RESERVE", uint256(10_000e6));
+        require(old.pendingOrderIds().length == 0, "old exchange still has pending orders");
+
+        vm.startBroadcast(pk);
+        AssetExchange ex = new AssetExchange(IERC20(usdc), vm.envAddress("FORWARDER"), ROUTER);
+        // Author before name: a name with no author makes onReport revert.
+        ex.setExpectedAuthor(vm.envAddress("WORKFLOW_AUTHOR"));
+        ex.setExpectedWorkflowName(vm.envString("WORKFLOW_NAME"));
+        ex.setCcipSource(BASE_SEPOLIA, true);
+
+        for (uint32 i; i < old.assetCount(); i++) {
+            (string memory symbol, address feed, address token,,) = old.asset(i);
+            CrossChainToken t = CrossChainToken(token);
+            t.grantMintAndBurnRoles(address(ex));
+            t.revokeRole(t.MINTER_ROLE(), address(old));
+            t.revokeRole(t.BURNER_ROLE(), address(old));
+            ex.listAsset(symbol, IPriceFeed(feed), ISyntheticToken(token));
+        }
+
+        MockUSDC(usdc).mint(me, reserve);
+        IERC20(usdc).approve(address(ex), reserve);
+        ex.fundReserve(reserve);
+        vm.stopBroadcast();
+
+        console2.log("ASSET_EXCHANGE ", address(ex));
+        console2.logBytes10(ex.getExpectedWorkflowName());
     }
 }

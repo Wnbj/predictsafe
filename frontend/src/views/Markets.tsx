@@ -48,7 +48,7 @@ export function Markets({
 }) {
   const [sort, setSort] = useState<SortMode>("backed");
   const [showRehearsals, setShowRehearsals] = useState(false);
-  const [status, setStatus] = useState<StatusFilter>("all");
+  const [status, setStatus] = useState<StatusFilter>("active");
   const [creating, setCreating] = useState(false);
 
   /**

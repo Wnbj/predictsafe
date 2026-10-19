@@ -192,8 +192,11 @@ Ordinary calls are unaffected in practice: `requestSettlement` estimates at
 
 ### Verify the source on Etherscan
 
-All ten deployed contracts are verified as of 2026-10-14 — the five markets,
-MockUSDC, AssetExchange and its two tokens, and SettlementKeeper. Unverified,
+Every deployed contract is verified — the five markets, MockUSDC, the
+SettlementKeeper, and since 2026-10-19 the third AssetExchange and
+MarketScheduler (the tokens and pools on both chains are listed under CCIP
+below). The exchange's constructor takes the CCIP router as a third argument
+now. Unverified,
 MetaMask showed users an "unknown contract" warning on every transaction. Do
 it for anything new as soon as it is deployed; the key lives in
 `contracts/.env` as `ETHERSCAN_API_KEY` (gitignored by `*.env`).
@@ -725,6 +728,7 @@ contract address in `config.staging.json` populated:
 | 6 | cron sweep, stocks |
 | 7 | cron, exchange order filler (only with `exchangeContractAddress` and `exchangeSchedule` set) |
 | 8 | cron, automatic settlement requests (only with `keeperContractAddress` and `keeperSchedule` set) |
+| 9 | cron, scheduled market opener (only with `schedulerContractAddress` and `schedulerSchedule` set) |
 
 **These numbers are positions in a list built at runtime, not fixed ids.**
 `initWorkflow` pushes a handler only when its contract address is non-empty
@@ -1040,7 +1044,7 @@ the node rather than passing it through workflow memory as a string. Not done.
 
 ## The asset exchange (synthetic gold and the S&P 500 ETF)
 
-`AssetExchange` at `0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2` sells synthetic
+`AssetExchange` at `0xaf764C8D21b2f057E5864125f9DB9c271ADfa340` sells synthetic
 tokens — `sXAU` `0x5026…a9E0`, `sCSPX` `0x2f42…03CD` — priced by Chainlink
 Data Feeds, against a reserve of mUSDC. It is not a market: nothing is
 settled, and `/live` does not scan it.
@@ -1051,10 +1055,15 @@ roles; a CCIP pool holds them too, which is what lets them travel to Base
 Sepolia (next section). A sell burns against the seller's ALLOWANCE — the app
 approves and places in one wallet prompt where it can.
 
-This is the second exchange. The first, `0x2118…c94D` (2026-09-25), created
-its own tokens with the exchange as their only authority, which left nothing
-CCIP could register; it is no longer read by the app or filled by the DON, and
-its reserve stays where it is (no withdraw function; test money).
+This is the third exchange, deployed 2026-10-19 by `DeployExchangeV3` to take
+sales that arrive over CCIP (next section). It runs on the SAME tokens: since
+the CCT rebuild they are separate contracts, so every balance on both chains
+carried over, and the second exchange `0xd15C…4ac2` lost its MINTER and
+BURNER roles in the same script — it had no pending orders — so it can no
+longer issue a token or take one back. Its reserve and order history stay
+where they are (no withdraw function; test money), and the app no longer reads
+them. The first, `0x2118…c94D` (2026-09-25), created its own tokens with the
+exchange as their only authority, which left nothing CCIP could register.
 
 **Every order fills at the first NEW price published after it.** New means a
 round whose price differs from the round before it, published strictly after
@@ -1129,8 +1138,19 @@ The exchange's tokens travel between Ethereum Sepolia and Base Sepolia through
 Chainlink CCIP, as registered cross-chain tokens with a **burn & mint** pool on
 each side: sending burns on the source chain, and the DON-attested message mints
 the same amount on the destination. Supply across both chains is constant, and
-a token on Base is still a claim on the one reserve on Sepolia — selling means
-bringing it back first.
+a token on Base is still a claim on the one reserve on Sepolia.
+
+**Selling from Base Sepolia** is one message: tokens to the EXCHANGE address on
+Sepolia, data `abi.encode(seller)`, extra args with a 400k gas limit
+(`0x181dcf10` + `(gasLimit, allowOutOfOrderExecution)` — the 2.0 on-ramp still
+accepts this legacy form and quoted it the same as a plain transfer, ~0.00069
+ETH, on 2026-10-19). On arrival `AssetExchange.ccipReceive` burns the tokens
+and places the sell order for the seller; the contract test keeps that under
+300k gas. Only source chains set with `setCcipSource` are accepted (Base
+Sepolia, `10344971235874465080`). Without a gas limit, or with empty data and
+no gas, the off-ramp delivers tokens without calling the receiver — so a plain
+transfer to the exchange would just leave the tokens there. The app always
+sends the gas.
 
 | | Ethereum Sepolia | Base Sepolia |
 |---|---|---|
@@ -1241,6 +1261,41 @@ cast call $K 'watchedAt(uint256)(address,uint8,uint32)' 0 --rpc-url $RPC      # 
 `preflight.sh` checks the keeper's forwarder, author and name like any
 receiver, and that it watches every market contract in the config — one left
 off the list is silent: its markets simply go back to waiting for a click.
+
+## Markets that open themselves (MarketScheduler)
+
+`MarketScheduler` at `0x8559a6e035bEC9F85369B9736054092ff579B01e` opens crypto
+markets from DON reports, trigger index 9 on `0 1 * * * *` (a minute past every
+hour). It exists for the same reason as the keeper: `CryptoMarket.newMarket` is
+open to anyone, but a DON report can only reach `onReport`.
+
+What to open is `marketSchedules` in the production config, one rule per
+market kind:
+
+| asset | horizon | staking closes | so |
+|---|---|---|---|
+| BTC | 1 hour | 15 min before | a market expiring every hour on the hour |
+| ETH | 4 hours | 1 hour before | at 00, 04, 08 … UTC |
+| BTC | 24 hours | 4 hours before | at midnight UTC |
+| ETH | 24 hours | 4 hours before | at midnight UTC |
+
+For each rule the handler takes the slot ending next — or, once that slot's
+staking has closed, the one after, so a daily market follows at the next run
+instead of leaving a gap until midnight — asks `scheduled(asset, close,
+expiry)` at the finalized block, and skips slots already open. Strikes come
+from the Sepolia Data Feeds (BTC/USD `0x1b44…Ee43`, ETH/USD `0x694A…5306`, 8
+decimals) rounded to $100 / $10; the question is the same sentence the app's
+Create market form writes. At most 1 + 4 + 2 = 7 chain reads.
+
+The contract re-checks everything and skips, with a reason in
+`MarketScheduleSkipped`, rather than reverting: a slot already open, less than
+five minutes left to stake, expiry more than three days out, no strike, an
+empty or over-long question. Up to six specs per report.
+
+Roughly 32 markets a day. Most will see no stakes, settle as Void with an
+empty book, and drop behind the board's "test markets hidden" count. The
+keeper settles them all the same — that is the point: something is always
+open.
 
 ## Reserve markets (Proof of Reserve / fund NAV)
 

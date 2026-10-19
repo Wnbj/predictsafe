@@ -32,7 +32,7 @@ export const AMM_MARKET_ADDRESS = (import.meta.env.VITE_AMM_MARKET_ADDRESS ??
  * Not a market contract — it settles nothing and is not scanned for logs.
  */
 export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
-  "0xd15Cc80324be41a58Fa4D7Cf6f19F78A200e4ac2") as `0x${string}`;
+  "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340") as `0x${string}`;
 
 export const TOKEN_ADDRESS = (import.meta.env.VITE_TOKEN_ADDRESS ??
   "0xcd123a8d74ef062dddd2287e87bc88eb3b208b54") as `0x${string}`;
