@@ -73,3 +73,39 @@ export function useBaseBalances(account: Address | null) {
 
   return { balances, reload: load };
 }
+
+/**
+ * Each exchange token's supply on Base Sepolia, by symbol. A token moved
+ * there is burned on Sepolia, so the reserve's "tokens out" has to add these
+ * back or it reads every transfer as tokens that no longer exist.
+ */
+export function useBaseSupply() {
+  const [supply, setSupply] = useState<Record<string, bigint> | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    const load = async () => {
+      const entries = Object.entries(BASE_TOKENS).filter((e): e is [string, Address] => e[1] !== null);
+      try {
+        const values = await Promise.all(
+          entries.map(([, token]) =>
+            basePublicClient.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }),
+          ),
+        );
+        if (live) setSupply(Object.fromEntries(entries.map(([symbol], i) => [symbol, values[i]!])));
+      } catch {
+        /* keep the last answer */
+      }
+    };
+    void load();
+    const t = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 60_000);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, []);
+
+  return supply;
+}

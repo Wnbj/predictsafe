@@ -20,7 +20,7 @@ import {
 } from "../lib/exchange";
 import type { WalletState } from "../hooks/useWallet";
 import { useExchange } from "../hooks/useExchange";
-import { useBaseBalances } from "../hooks/useBridge";
+import { useBaseBalances, useBaseSupply } from "../hooks/useBridge";
 import { TradeForm } from "../components/TradeForm";
 import { BridgeDialog, type BridgeAsset } from "../components/BridgeDialog";
 import { formatDollars, formatUnitsShort } from "../components/walletParts";
@@ -451,11 +451,18 @@ function OrderRow({
  * refunded rather than paid in part.
  */
 function Reserve({ state }: { state: ExchangeState }) {
-  const outstanding = state.assets.reduce(
-    (sum, a) => sum + valueOf(a.totalSupply, a.latest.answer, a.feedDecimals),
-    0n,
-  );
-  const coverage = outstanding > 0n ? Number((state.reserve * 1000n) / outstanding) / 10 : null;
+  // Both chains: a token moved to Base Sepolia is burned here and minted
+  // there, and it is still a claim on this reserve.
+  const baseSupply = useBaseSupply();
+  const outstanding = baseSupply
+    ? state.assets.reduce(
+        (sum, a) =>
+          sum + valueOf(a.totalSupply + (baseSupply[`s${a.symbol}`] ?? 0n), a.latest.answer, a.feedDecimals),
+        0n,
+      )
+    : null;
+  const coverage =
+    outstanding === null ? null : outstanding > 0n ? Number((state.reserve * 1000n) / outstanding) / 10 : null;
   return (
     <section className="wallet" aria-label="The reserve">
       <div className="wallet-head">
@@ -467,7 +474,7 @@ function Reserve({ state }: { state: ExchangeState }) {
         <div className="positions-stats">
           <div>
             <span>Tokens out</span>
-            <b>{formatToken(outstanding)}</b>
+            <b>{outstanding === null ? "…" : formatToken(outstanding)}</b>
           </div>
           <div className={coverage !== null && coverage >= 100 ? "accent" : undefined}>
             <span>Coverage</span>
@@ -483,7 +490,8 @@ function Reserve({ state }: { state: ExchangeState }) {
         This contract is the counterparty. When an asset rises, sellers are paid from the reserve;
         a sale the reserve cannot cover is refunded — the tokens come back — rather than paid in
         part. Buy orders still waiting are held apart and never used to pay anyone else. “Tokens
-        out” is the Sepolia supply: a token moved to Base Sepolia is burned here while it is there.
+        out” counts both chains, at the latest prices: a token moved to Base Sepolia is still a
+        claim on this reserve.
       </p>
     </section>
   );
