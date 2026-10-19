@@ -33,6 +33,8 @@ import {
   scheduledQuestion,
   encodeSchedulerReport,
   SCHEDULE_MIN_STAKING_SECONDS,
+  SCHEDULER_SPECS_PER_REPORT,
+  schedulerGasLimit,
 } from "./main"
 
 /**
@@ -780,6 +782,14 @@ describe("scheduled markets", () => {
     )
     expect(scheduledQuestion("ETH", 240_000_000_000n, Date.UTC(2026, 9, 20) / 1000)).toBe(
       "Will ETH be at or above $2,400 at 00:00 UTC on Oct 20?",
+    )
+  })
+
+  test("asks for gas Sepolia actually charges: ~590k per newMarket, measured", () => {
+    expect(SCHEDULER_SPECS_PER_REPORT).toBeLessThanOrEqual(2)
+    expect(Number(schedulerGasLimit(1))).toBeGreaterThanOrEqual(1_000_000)
+    expect(Number(schedulerGasLimit(SCHEDULER_SPECS_PER_REPORT))).toBeGreaterThanOrEqual(
+      SCHEDULER_SPECS_PER_REPORT * 590_000 * 1.5,
     )
   })
 

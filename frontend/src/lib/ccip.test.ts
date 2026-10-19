@@ -50,7 +50,7 @@ describe("selling on arrival", () => {
     expect(decodeAbiParameters([{ type: "address" }], m.data)[0].toLowerCase()).toBe(ME);
     expect(m.extraArgs.slice(0, 10)).toBe("0x181dcf10");
     const [gas, ooo] = decodeAbiParameters([{ type: "uint256" }, { type: "bool" }], `0x${m.extraArgs.slice(10)}`);
-    expect(gas).toBe(400_000n);
+    expect(gas).toBe(1_500_000n);
     expect(ooo).toBe(true);
   });
 

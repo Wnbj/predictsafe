@@ -525,6 +525,8 @@ contract AssetExchangeTest is Test {
         vm.prank(router);
         uint256 g = gasleft();
         ex.ccipReceive(m);
-        assertLt(g - gasleft(), 300_000, "the app asks for 400k on the destination");
+        // Local EVM gas. Sepolia charges ~3x for storage (an order estimated at
+        // ~880k there), which is why the app asks for 1.5M, not this figure.
+        assertLt(g - gasleft(), 300_000, "local cost");
     }
 }

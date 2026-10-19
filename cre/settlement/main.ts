@@ -2163,7 +2163,18 @@ export const SCHEDULED_STRIKE_STEP: Record<ScheduledAsset, number> = { BTC: 100,
  */
 export const SCHEDULE_MIN_STAKING_SECONDS = 10 * 60
 
-const SCHEDULER_GAS_LIMIT = "1500000"
+/**
+ * Markets opened per report, soonest-closing first; the rest wait an hour.
+ *
+ * Sepolia prices storage far above what forge's local EVM measures: one
+ * `newMarket` estimated at 590k gas there against ~170k locally (2026-10-19).
+ * The first run asked for four in 1.5M gas, spent 1.46M of it, and the
+ * forwarder recorded the report as refused — out of gas inside the receiver.
+ */
+export const SCHEDULER_SPECS_PER_REPORT = 2
+
+/** 400k for the envelope, 1M per market: ~1.7x the measured cost of one. */
+export const schedulerGasLimit = (specs: number): string => String(400_000 + 1_000_000 * specs)
 
 /**
  * The soonest slot after `nowSeconds` that still leaves time to stake: the one
@@ -2259,6 +2270,7 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
     return "every slot already open"
   }
 
+  // Only the assets of the markets about to be opened need a price.
   const prices = new Map<ScheduledAsset, bigint>()
   const priceOf = (asset: ScheduledAsset): bigint => {
     const known = prices.get(asset)
@@ -2282,7 +2294,8 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
     return answer
   }
 
-  const specs: ScheduledSpec[] = open.map((c) => {
+  const batch = [...open].sort((a, b) => a.closeTime - b.closeTime).slice(0, SCHEDULER_SPECS_PER_REPORT)
+  const specs: ScheduledSpec[] = batch.map((c) => {
     const strike = roundStrike(priceOf(c.rule.asset), SCHEDULED_STRIKE_STEP[c.rule.asset])
     return {
       asset: SCHEDULED_ASSET_INDEX[c.rule.asset],
@@ -2299,7 +2312,7 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
     .writeReport(runtime, {
       receiver: address,
       report: signedReport,
-      gasConfig: { gasLimit: SCHEDULER_GAS_LIMIT },
+      gasConfig: { gasLimit: schedulerGasLimit(specs.length) },
     })
     .result()
 

@@ -1141,12 +1141,14 @@ the same amount on the destination. Supply across both chains is constant, and
 a token on Base is still a claim on the one reserve on Sepolia.
 
 **Selling from Base Sepolia** is one message: tokens to the EXCHANGE address on
-Sepolia, data `abi.encode(seller)`, extra args with a 400k gas limit
+Sepolia, data `abi.encode(seller)`, extra args with a 1.5M gas limit
 (`0x181dcf10` + `(gasLimit, allowOutOfOrderExecution)` — the 2.0 on-ramp still
 accepts this legacy form and quoted it the same as a plain transfer, ~0.00069
 ETH, on 2026-10-19). On arrival `AssetExchange.ccipReceive` burns the tokens
-and places the sell order for the seller; the contract test keeps that under
-300k gas. Only source chains set with `setCcipSource` are accepted (Base
+and places the sell order for the seller. That is under 300k gas in forge's
+local EVM but ~880k on Sepolia, which now prices storage about three times
+higher (an order placement estimated with `eth_estimateGas` 2026-10-19) — 400k,
+the first figure, would have failed every sale on arrival. Only source chains set with `setCcipSource` are accepted (Base
 Sepolia, `10344971235874465080`). Without a gas limit, or with empty data and
 no gas, the off-ramp delivers tokens without calling the receiver — so a plain
 transfer to the exchange would just leave the tokens there. The app always
@@ -1290,7 +1292,22 @@ Create market form writes. At most 1 + 4 + 2 = 7 chain reads.
 The contract re-checks everything and skips, with a reason in
 `MarketScheduleSkipped`, rather than reverting: a slot already open, less than
 five minutes left to stake, expiry more than three days out, no strike, an
-empty or over-long question. Up to six specs per report.
+empty or over-long question. Up to six specs per report in the contract; the
+workflow sends at most two, soonest-closing first, with 400k + 1M gas each.
+
+**The first run was refused, and the reason is gas.** 21:01 UTC on 2026-10-19:
+four markets in one 1.5M-gas report, 1,459,974 gas used, and
+`ReportProcessed(result = false)` on the forwarder — nothing opened. One
+`newMarket` estimates at ~590k on Sepolia against ~170k in forge's local EVM.
+The execution itself reads SUCCESS in `cre execution list`: a refused report
+is only visible in the forwarder's log.
+
+**Proven at 21:06 UTC the same evening**, after the fix: tx `0xa0de917b…`,
+`ReportProcessed(result = true)`, 1,551,850 gas for two markets (~775k each,
+against 2.4M asked) — crypto #18 "Will BTC be at or above $81,900 at 22:00 UTC
+on Oct 19?" and #19, ETH $2,400 at midnight. Nobody pressed anything. The
+schedule ran every three minutes for that test and is back to hourly, workflow
+ID `00dbe043…`.
 
 Roughly 32 markets a day. Most will see no stakes, settle as Void with an
 empty book, and drop behind the board's "test markets hidden" count. The

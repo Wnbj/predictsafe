@@ -112,9 +112,14 @@ export const gasLimitArgs = (gasLimit: bigint): `0x${string}` =>
  * Selling from Base Sepolia in one signature: the tokens go to the EXCHANGE
  * on Sepolia, with the seller's address as data, and `ccipReceive` there
  * burns them and places the sell order — a CCIP programmable token transfer.
- * 400k gas covers it with room: the contract test holds it under 300k.
+ *
+ * The gas is spent on Sepolia, which prices storage far above forge's local
+ * EVM: placing one order estimated at ~880k there (2026-10-19) against under
+ * 300k in the contract test. 400k, the first figure here, would have run the
+ * receiver out of gas and left the message failed. 1.5M is ~1.7x the
+ * measurement; the lane quoted up to 5M, and the fee only rises ~8%.
  */
-export const SELL_ON_ARRIVAL_GAS = 400_000n;
+export const SELL_ON_ARRIVAL_GAS = 1_500_000n;
 
 export const sellOnArrival = (seller: Address): ReceiverCall => ({
   data: encodeAbiParameters([{ type: "address" }], [seller]),
