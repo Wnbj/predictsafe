@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import type { Address } from "viem";
 import { category } from "../lib/categories";
-import { formatSigned, formatToken } from "../lib/format";
+import { formatRelative, formatSigned, formatToken } from "../lib/format";
 import {
   sendAmmRedeem,
   sendAmmWithdrawLiquidity,
   sendClaim,
   waitForTx,
 } from "../lib/chain";
-import { SummaryCard } from "../components/SummaryCard";
+import { useNow } from "../hooks/useNow";
 import { Wallet } from "../components/Wallet";
 import { MarketStatus, type Market, type Position } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
@@ -158,205 +158,305 @@ export function Portfolio({
         */}
       <Wallet account={wallet.account} onOpenTrade={onOpenTrade} />
 
-      <div className="eyebrow" style={{ marginBottom: "var(--space-2)" }}>Prediction markets</div>
-      {marketsLoading ? (
-        <div className="muted" style={{ fontSize: 13 }}>Loading your positions from Sepolia…</div>
-      ) : (
-        <>
-        <p className="muted" style={{ margin: "0 0 var(--space-6)" }}>
-          {positions.length} position{positions.length === 1 ? "" : "s"} · {totals.open} open
-        </p>
-
-        <div className="grid-4" style={{ maxWidth: 1100, marginBottom: "var(--space-6)" }}>
-          <SummaryCard label="Total staked" value={formatToken(totals.staked)} />
-          <SummaryCard
-            label="Claimable now"
-            value={formatToken(totals.claimable)}
-            accent={totals.claimable > 0n}
-          />
-          <SummaryCard
-            label="Realised P&L"
-            value={formatSigned(totals.realised)}
-            color={totals.realised >= 0n ? "var(--color-accent-300)" : "var(--color-negative)"}
-          />
-          <SummaryCard label="Open positions" value={String(totals.open)} />
-        </div>
-
-        <div className="seg" style={{ marginBottom: "var(--space-4)" }}>
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              className={filter === f.key ? "active" : ""}
-              onClick={() => setFilter(f.key)}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-
-        {error && (
-          <div style={{ color: "var(--color-negative)", fontSize: 13, marginBottom: "var(--space-3)" }}>
-            {error}
-          </div>
-        )}
-
-        {filtered.length === 0 ? (
-          <div className="card" style={{ maxWidth: 520 }}>
-            <div className="heading" style={{ fontSize: 17 }}>
-              Nothing to show
-            </div>
-            <div className="muted" style={{ fontSize: 13 }}>
-              {positions.length === 0
-                ? "This wallet has not staked on any market yet."
-                : "No positions match this filter."}
-            </div>
-          </div>
-        ) : (
-          <div className="table-scroll">
-            <table className="data" style={{ maxWidth: 1200 }}>
-              <thead>
-                <tr>
-                  <th>Market</th>
-                  <th>Side</th>
-                  <th>Staked</th>
-                  <th>Claimable</th>
-                  <th>P&amp;L</th>
-                  <th>Status</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((p) => {
-                  const cat = category(p.market.categoryId);
-                  /**
-                   * `p.cost`, matching the summary cards above. This row used to
-                   * use `p.yes + p.no`, which for an AMM is SHARES rather than
-                   * money — so the table disagreed with its own totals, and the
-                   * disagreement grew with every liquidity position.
-                   */
-                  const size = p.cost;
-                  const resolved =
-                    p.market.status === MarketStatus.Settled ||
-                    p.market.status === MarketStatus.Void;
-                  const pl = resolved ? p.entitlement - size : null;
-                  // What `redeem`/`claim` alone would pay: the pool slice is a
-                  // separate call and must not gate this button. This row had
-                  // the rule right before `shareClaimable` existed and derived
-                  // it by hand; the field now says it once, for every caller.
-                  const shareClaim = p.shareClaimable;
-                  const side = p.lp
-                    ? p.yes > 0n || p.no > 0n
-                      ? `LP + ${p.yes > 0n ? "Yes" : "No"}`
-                      : "LP"
-                    : p.yes > 0n && p.no > 0n
-                      ? "Both"
-                      : p.yes > 0n
-                        ? "Yes"
-                        : "No";
-
-                  return (
-                    <tr key={p.market.key}>
-                      <td>
-                        <span
-                          className="tag"
-                          style={{ ...cat.tagStyle, marginRight: 8 }}
-                        >
-                          {cat.name}
-                        </span>
-                        <a
-                          href="#"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            onOpenMarket(p.market.key);
-                          }}
-                          style={{ textDecoration: "none" }}
-                        >
-                          {p.market.question}
-                        </a>
-                      </td>
-                      <td>{side}</td>
-                      <td>{formatToken(size)}</td>
-                      <td>{p.claimable > 0n ? formatToken(p.claimable) : "—"}</td>
-                      <td
-                        style={{
-                          color:
-                            pl === null
-                              ? undefined
-                              : pl >= 0n
-                                ? "var(--color-accent-300)"
-                                : "var(--color-negative)",
-                        }}
-                      >
-                        {pl === null ? "—" : formatSigned(pl)}
-                      </td>
-                      <td>
-                        <span className="tag" style={statusStyle(p.status)}>
-                          {p.status}
-                        </span>
-                      </td>
-                      {/*
-                        * TWO claims, two buttons. A provider is owed their shares
-                        * through `redeem` and their slice of the pool through
-                        * `withdrawLiquidity`, each with its own irreversible
-                        * one-shot guard on chain. A single button would fire one
-                        * and strand the other for good.
-                        */}
-                      <td style={{ display: "flex", gap: 6 }}>
-                        {shareClaim > 0n && (
-                          <button
-                            className="btn btn-accent"
-                            style={{ padding: "4px 10px", fontSize: 13 }}
-                            disabled={claiming !== null}
-                            onClick={() => void doClaim(p.market)}
-                          >
-                            {claiming === p.market.key
-                              ? p.market.categoryId === "amm"
-                                ? "Redeeming…"
-                                : "Claiming…"
-                              : p.market.categoryId === "amm"
-                                ? "Redeem"
-                                : "Claim"}
-                          </button>
-                        )}
-                        {resolved && p.lp && !p.lp.withdrawn && p.lp.poolValue > 0n && (
-                          <button
-                            className="btn"
-                            style={{ padding: "4px 10px", fontSize: 13 }}
-                            disabled={claiming !== null}
-                            onClick={() => void doWithdraw(p.market)}
-                          >
-                            {claiming === `${p.market.key}:lp` ? "Withdrawing…" : "Withdraw LP"}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        </>
-      )}
+      <PositionsSection
+        positions={positions}
+        loading={marketsLoading}
+        totals={totals}
+        filter={filter}
+        setFilter={setFilter}
+        filtered={filtered}
+        error={error}
+        claiming={claiming}
+        onClaim={(m) => void doClaim(m)}
+        onWithdraw={(m) => void doWithdraw(m)}
+        onOpenMarket={onOpenMarket}
+      />
     </div>
   );
 }
 
-function statusStyle(status: Position["status"]): React.CSSProperties {
-  switch (status) {
-    case "Won":
-      return { background: "#423a6a", color: "#f5f4ff" };
-    case "Lost":
-      return { background: "#3f424d", color: "#f3f5fe" };
-    case "Refundable":
-      return { background: "#423e5d", color: "#f5f4ff" };
-    case "Claimed":
-      return { background: "#292b31", color: "#b2b6ca" };
-    default:
-      return {
-        background: "transparent",
-        border: "1px solid var(--color-accent)",
-        color: "var(--color-accent)",
-      };
-  }
+/** How many rows show before "Show all". The deployer alone holds over seventy. */
+const PAGE = 10;
+
+const isResolved = (p: Position) =>
+  p.market.status === MarketStatus.Settled || p.market.status === MarketStatus.Void;
+
+/**
+ * Money waiting first — it is the reason to open this page — then what is
+ * still open, then history; newest first within each.
+ */
+function rank(p: Position): number {
+  if (p.claimable > 0n) return 0;
+  return isResolved(p) ? 2 : 1;
+}
+
+/**
+ * The positions as a list in the wallet's style rather than a seven-column
+ * table: one row per market with the question, the side and the stake under
+ * it, the result on the right, and the one thing to do about it.
+ */
+function PositionsSection({
+  positions,
+  loading,
+  totals,
+  filter,
+  setFilter,
+  filtered,
+  error,
+  claiming,
+  onClaim,
+  onWithdraw,
+  onOpenMarket,
+}: {
+  positions: Position[];
+  loading: boolean;
+  totals: { staked: bigint; claimable: bigint; realised: bigint; open: number };
+  filter: Filter;
+  setFilter: (f: Filter) => void;
+  filtered: Position[];
+  error: string | null;
+  claiming: string | null;
+  onClaim: (m: Market) => void;
+  onWithdraw: (m: Market) => void;
+  onOpenMarket: (key: string) => void;
+}) {
+  const [shown, setShown] = useState(PAGE);
+  const now = useNow(30_000);
+
+  const counts: Record<Filter, number> = {
+    all: positions.length,
+    open: positions.filter((p) => !isResolved(p)).length,
+    resolved: positions.filter(isResolved).length,
+    claimable: positions.filter((p) => p.claimable > 0n).length,
+  };
+
+  const sorted = useMemo(
+    () =>
+      [...filtered].sort((a, b) => rank(a) - rank(b) || b.market.closeTime - a.market.closeTime),
+    [filtered],
+  );
+
+  const choose = (f: Filter) => {
+    setFilter(f);
+    setShown(PAGE);
+  };
+
+  return (
+    <section className="wallet" aria-label="Prediction market positions">
+      <div className="wallet-head">
+        <div>
+          <div className="eyebrow">Prediction markets</div>
+          <div
+            className="wallet-total"
+            style={{
+              color: loading ? undefined : totals.realised >= 0n ? "var(--color-accent-300)" : "var(--color-negative)",
+            }}
+          >
+            {loading ? "…" : formatSigned(totals.realised)}
+          </div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            realised P&amp;L on resolved markets
+          </div>
+        </div>
+        <div className="positions-stats">
+          <div>
+            <span>Staked</span>
+            <b>{loading ? "…" : formatToken(totals.staked)}</b>
+          </div>
+          <div className={totals.claimable > 0n ? "accent" : undefined}>
+            <span>To collect</span>
+            <b>{loading ? "…" : formatToken(totals.claimable)}</b>
+          </div>
+          <div>
+            <span>Open</span>
+            <b>{loading ? "…" : totals.open}</b>
+          </div>
+        </div>
+      </div>
+
+      {!loading && totals.claimable > 0n && filter !== "claimable" && (
+        <button className="wallet-transit" onClick={() => choose("claimable")}>
+          <span className="positions-coin" aria-hidden="true">$</span>
+          {formatToken(totals.claimable)} waiting to be collected from {counts.claimable} market
+          {counts.claimable === 1 ? "" : "s"}
+          <span className="muted" style={{ marginLeft: "auto" }}>Show →</span>
+        </button>
+      )}
+
+      <div className="wallet-tabs" role="tablist">
+        {FILTERS.map((f) => (
+          <button
+            key={f.key}
+            role="tab"
+            aria-selected={filter === f.key}
+            className={filter === f.key ? "active" : ""}
+            onClick={() => choose(f.key)}
+          >
+            {f.label}
+            {!loading &&
+              (f.key === "claimable" ? (
+                counts.claimable > 0 && <span className="wallet-count">{counts.claimable}</span>
+              ) : (
+                <span className="muted-strong" style={{ fontSize: 12 }}>{counts[f.key]}</span>
+              ))}
+          </button>
+        ))}
+      </div>
+
+      {error && <div style={{ color: "var(--color-negative)", fontSize: 13 }}>{error}</div>}
+
+      {loading ? (
+        <ul className="wallet-list">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="wallet-row">
+              <span className="wallet-icon skeleton" />
+              <div className="skeleton" style={{ height: 14, width: "50%" }} />
+            </li>
+          ))}
+        </ul>
+      ) : sorted.length === 0 ? (
+        <div className="muted" style={{ fontSize: 13, padding: "var(--space-4) 0" }}>
+          {positions.length === 0 ? "This wallet has not staked on any market yet." : "No positions match this filter."}
+        </div>
+      ) : (
+        <>
+          <ul className="wallet-list">
+            {sorted.slice(0, shown).map((p) => (
+              <PositionRow
+                key={p.market.key}
+                p={p}
+                now={now}
+                claiming={claiming}
+                onClaim={onClaim}
+                onWithdraw={onWithdraw}
+                onOpenMarket={onOpenMarket}
+              />
+            ))}
+          </ul>
+          {sorted.length > shown && (
+            <button className="btn positions-more" onClick={() => setShown(sorted.length)}>
+              Show all {sorted.length}
+            </button>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+const STATUS_CLASS: Record<Position["status"], string> = {
+  Open: "pending",
+  "Awaiting settlement": "pending",
+  Won: "done",
+  Lost: "lost",
+  Refundable: "slow",
+  Claimed: "neutral",
+};
+
+function PositionRow({
+  p,
+  now,
+  claiming,
+  onClaim,
+  onWithdraw,
+  onOpenMarket,
+}: {
+  p: Position;
+  now: number;
+  claiming: string | null;
+  onClaim: (m: Market) => void;
+  onWithdraw: (m: Market) => void;
+  onOpenMarket: (key: string) => void;
+}) {
+  const cat = category(p.market.categoryId);
+  /**
+   * `p.cost`, matching the totals above. This row once used `p.yes + p.no`,
+   * which for an AMM is SHARES rather than money — so the list disagreed with
+   * its own totals, and the disagreement grew with every liquidity position.
+   */
+  const size = p.cost;
+  const resolved = isResolved(p);
+  const pl = resolved ? p.entitlement - size : null;
+  // What `redeem`/`claim` alone would pay: the pool slice is a separate call
+  // and must not gate this button.
+  const shareClaim = p.shareClaimable;
+  const amm = p.market.categoryId === "amm";
+  const side = p.lp
+    ? p.yes > 0n || p.no > 0n
+      ? `LP + ${p.yes > 0n ? "Yes" : "No"}`
+      : "LP"
+    : p.yes > 0n && p.no > 0n
+      ? "Both"
+      : p.yes > 0n
+        ? "Yes"
+        : "No";
+  const canWithdraw = resolved && p.lp && !p.lp.withdrawn && p.lp.poolValue > 0n;
+  const open = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onOpenMarket(p.market.key);
+  };
+
+  return (
+    <li className={`wallet-row position-row${p.claimable > 0n ? " claimable" : ""}`}>
+      {cat.image ? (
+        <img className="wallet-icon" src={cat.image} alt="" />
+      ) : (
+        <span className="wallet-icon wallet-icon-glyph" aria-hidden="true">{cat.icon(26)}</span>
+      )}
+      <div className="wallet-row-main">
+        <a href="#" className="wallet-row-name position-question" onClick={open}>
+          {p.market.question}
+        </a>
+        <div className="wallet-row-chains">
+          <span className="muted">{cat.name}</span>
+          <span className={`position-side ${side === "No" ? "no" : "yes"}`}>{side}</span>
+          <span className="muted">{formatToken(size)} in</span>
+          {!resolved && p.market.closeTime > 0 && (
+            <span className="muted">
+              {p.market.closeTime > now ? `closes ${formatRelative(p.market.closeTime, now)}` : "closed, settling"}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="wallet-row-value">
+        <div
+          style={{
+            color: pl === null ? undefined : pl > 0n ? "var(--color-accent-300)" : pl < 0n ? "var(--color-negative)" : undefined,
+          }}
+        >
+          {pl === null ? formatToken(size) : formatSigned(pl)}
+        </div>
+        <span className={`wallet-status ${STATUS_CLASS[p.status]}`}>
+          {p.status === "Awaiting settlement" ? "Settling" : p.status}
+        </span>
+      </div>
+      {/*
+        * TWO claims, two buttons. A provider is owed their shares through
+        * `redeem` and their slice of the pool through `withdrawLiquidity`, each
+        * with its own irreversible one-shot guard on chain. A single button
+        * would fire one and strand the other for good.
+        */}
+      <div className="wallet-row-action position-actions">
+        {shareClaim > 0n && (
+          <button className="btn btn-accent" disabled={claiming !== null} onClick={() => onClaim(p.market)}>
+            {claiming === p.market.key
+              ? amm
+                ? "Redeeming…"
+                : "Claiming…"
+              : `${amm ? "Redeem" : "Claim"} ${formatToken(shareClaim)}`}
+          </button>
+        )}
+        {canWithdraw && (
+          <button className="btn" disabled={claiming !== null} onClick={() => onWithdraw(p.market)}>
+            {claiming === `${p.market.key}:lp` ? "Withdrawing…" : "Withdraw LP"}
+          </button>
+        )}
+        {shareClaim === 0n && !canWithdraw && (
+          <a href="#" className="btn position-view" onClick={open}>
+            View
+          </a>
+        )}
+      </div>
+    </li>
+  );
 }
