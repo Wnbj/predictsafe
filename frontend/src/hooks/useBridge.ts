@@ -44,10 +44,11 @@ export function useBridgeTransfers(account: Address, onArrive: () => void): Brid
  * The wallet's exchange tokens on Base Sepolia, by symbol. Read from Base's
  * public RPC, which is not the Sepolia budget, every 30 seconds.
  */
-export function useBaseBalances(account: Address) {
+export function useBaseBalances(account: Address | null) {
   const [balances, setBalances] = useState<Record<string, bigint> | null>(null);
 
   const load = useCallback(async () => {
+    if (!account) return;
     const entries = Object.entries(BASE_TOKENS).filter((e): e is [string, Address] => e[1] !== null);
     try {
       const values = await Promise.all(

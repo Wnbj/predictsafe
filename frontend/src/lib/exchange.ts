@@ -265,6 +265,20 @@ export function canCancel(o: ExchangeOrder, account: Address | null, nowSeconds:
   );
 }
 
+/** A failed exchange call, in words a trader can act on. */
+export function exchangeError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/User rejected|denied transaction/i.test(msg)) return "Transaction rejected in wallet.";
+  if (/AssetInactive/.test(msg)) return "This asset is not taking new orders.";
+  if (/TooEarlyToCancel/.test(msg)) return "Orders can be taken back 7 days after they were placed.";
+  if (/NotYourOrder/.test(msg)) return "That order belongs to another wallet.";
+  if (/BadFeedPrice/.test(msg)) return "The price feed returned no usable price.";
+  if (/insufficient funds/i.test(msg)) return "Not enough Sepolia ETH for gas.";
+  if (/ERC20InsufficientBalance/.test(msg)) return "Not enough balance for that amount.";
+  const first = msg.split("\n")[0] ?? msg;
+  return first.length > 160 ? `${first.slice(0, 160)}…` : first;
+}
+
 export function formatAssetAmount(tokens: bigint, symbol: string): string {
   const n = Number(formatUnits(tokens, ASSET_TOKEN_DECIMALS));
   return `${n.toLocaleString("en-US", { maximumFractionDigits: 6 })} s${symbol}`;

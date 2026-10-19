@@ -1259,3 +1259,205 @@ input:focus {
     flex-direction: row;
   }
 }
+
+/* ---- the wallet's buy / sell dialog ------------------------------------- */
+
+.trade-assets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.trade-assets button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-divider);
+  background: var(--color-neutral-900);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+.trade-assets button.active {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+.trade-assets button:disabled {
+  cursor: not-allowed;
+}
+.trade-assets img {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.trade-assets span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.3;
+}
+.trade-assets b {
+  font-weight: 500;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trade-balance {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 5px;
+  font-size: 12px;
+}
+.trade-balance .linklike {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+/* ---- the Trade page, in the wallet's style ------------------------------ */
+
+.trade-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: var(--space-8);
+  align-items: start;
+  max-width: 1240px;
+}
+.trade-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+.trade-main .wallet,
+.trade-side {
+  margin: 0;
+  max-width: none;
+}
+.trade-side {
+  position: sticky;
+  top: 84px;
+}
+.trade-asset {
+  cursor: pointer;
+  grid-template-columns: 40px 1fr auto 150px;
+}
+.trade-asset.selected {
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
+.trade-asset-actions {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+.trade-held-narrow {
+  display: none;
+}
+@media (max-width: 720px) {
+  .trade-held-narrow {
+    display: inline;
+  }
+}
+.trade-price {
+  font-size: 20px;
+  font-weight: 600;
+}
+.feed-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.feed-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.feed-state.moving {
+  color: #9fd8b5;
+}
+.feed-state.moving .feed-dot {
+  background: #9fd8b5;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #9fd8b5 25%, transparent);
+}
+.feed-state.paused {
+  color: #e8c98c;
+}
+.feed-state.paused .feed-dot {
+  background: #e8c98c;
+}
+.feed-state.closed {
+  color: var(--color-neutral-400);
+}
+.feed-state.closed .feed-dot {
+  background: var(--color-neutral-500);
+}
+.trade-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.trade-steps li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.trade-step-n {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--color-accent-900);
+  color: var(--color-accent-300);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+@media (max-width: 1100px) {
+  /* One column: the form goes straight under the assets it trades, ahead of
+     the explanation, the orders and the reserve. */
+  .trade-layout {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+  .trade-main {
+    display: contents;
+  }
+  .trade-main > * {
+    order: 2;
+  }
+  .trade-main > :first-child {
+    order: 0;
+  }
+  .trade-side {
+    order: 1;
+    position: static;
+    scroll-margin-top: 80px;
+  }
+}
+@media (max-width: 720px) {
+  .trade-steps {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .trade-asset {
+    grid-template-columns: 36px 1fr auto;
+  }
+  .trade-held-wide {
+    display: none;
+  }
+  .trade-price {
+    font-size: 17px;
+  }
+}

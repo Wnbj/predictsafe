@@ -5,10 +5,11 @@ import { useExchange } from "../hooks/useExchange";
 import { useNow } from "../hooks/useNow";
 import { ASSET_IMAGES } from "../lib/categories";
 import { ccipExplorerTx, CCIP_CHAINS, type CcipSide } from "../lib/ccip";
-import { holdingsFor, marketState, valueOf, type ExchangeOrder, type ExchangeState } from "../lib/exchange";
+import { holdingsFor, marketState, valueOf, type ExchangeOrder, type ExchangeState, type OrderSide } from "../lib/exchange";
 import { formatRelative, formatToken, shortAddress } from "../lib/format";
 import { isPending, SLOW_AFTER_MS, type BridgeTransfer } from "../lib/transfers";
 import { BridgeDialog, type BridgeAsset } from "./BridgeDialog";
+import { TradeDialog } from "./TradeDialog";
 import { ChainBadge, formatDollars, formatUnitsShort } from "./walletParts";
 
 /**
@@ -40,6 +41,7 @@ export function Wallet({ account, onOpenTrade }: { account: Address; onOpenTrade
   const clock = useNow(5_000);
   const [tab, setTab] = useState<Tab>("assets");
   const [bridge, setBridge] = useState<{ symbol: string; from: CcipSide } | null>(null);
+  const [trade, setTrade] = useState<{ side: OrderSide; assetId: number } | null>(null);
 
   const inTransit = useMemo(() => {
     const m: Record<string, bigint> = {};
@@ -84,6 +86,12 @@ export function Wallet({ account, onOpenTrade }: { account: Address; onOpenTrade
     setBridge({ symbol: a.symbol, from: a.sepolia === 0n && (a.base ?? 0n) > 0n ? "base" : "sepolia" });
   };
 
+  const openTrade = (side: OrderSide) => {
+    if (!state || state.assets.length === 0) return;
+    const held = side === "sell" ? state.assets.find((a) => a.balance > 0n) : undefined;
+    setTrade({ side, assetId: (held ?? state.assets[0]!).id });
+  };
+
   return (
     <section className="wallet" aria-label="Wallet">
       <div className="wallet-head">
@@ -101,8 +109,8 @@ export function Wallet({ account, onOpenTrade }: { account: Address; onOpenTrade
           </div>
         </div>
         <div className="wallet-actions">
-          <WalletAction icon="+" label="Buy" onClick={onOpenTrade} />
-          <WalletAction icon="−" label="Sell" onClick={onOpenTrade} />
+          <WalletAction icon="+" label="Buy" onClick={() => openTrade("buy")} disabled={!state} />
+          <WalletAction icon="−" label="Sell" onClick={() => openTrade("sell")} disabled={!state} />
           <WalletAction icon="⇄" label="CCIP Transfer" onClick={() => openBridge()} disabled={!state} />
         </div>
       </div>
@@ -216,8 +224,28 @@ export function Wallet({ account, onOpenTrade }: { account: Address; onOpenTrade
       )}
 
       <p className="muted-strong" style={{ fontSize: 11, margin: 0 }}>
-        Valued at each Chainlink feed's latest price. Orders fill at the next new one.
+        Valued at each Chainlink feed's latest price. Orders fill at the next new one.{" "}
+        <button className="linklike" onClick={onOpenTrade} style={{ color: "var(--color-accent)" }}>
+          Full exchange page →
+        </button>
       </p>
+
+      {trade && state && (
+        <TradeDialog
+          account={account}
+          state={state}
+          usdc={usdc}
+          now={now}
+          initial={trade}
+          baseBalances={base.balances}
+          onClose={() => setTrade(null)}
+          onDone={() => reload()}
+          onTransferBack={(symbol) => {
+            setTrade(null);
+            setBridge({ symbol, from: "base" });
+          }}
+        />
+      )}
 
       {bridge && state && (
         <BridgeDialog

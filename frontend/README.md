@@ -22,8 +22,8 @@ Sepolia. Reads work without one.
 | `/` | Landing | stats, categories, most-backed markets |
 | `/markets` | Markets | every market, filterable by category; untouched test markets hidden behind a count |
 | `/markets/:category/:id` | Detail | odds, price chart, strike ladder, stake / buy / sell, settlement evidence |
-| `/portfolio` | Portfolio | the wallet (mUSDC and tokens on both chains, bridge, activity), then market positions with claim / redeem / withdraw |
-| `/trade` | Trade | the synthetic gold and S&P 500 ETF exchange |
+| `/portfolio` | Portfolio | the wallet (mUSDC and tokens on both chains, buy / sell and CCIP transfer dialogs, activity), then market positions with claim / redeem / withdraw |
+| `/trade` | Trade | the synthetic gold and S&P 500 ETF exchange: assets, the order form (shared with the wallet's dialog), orders, reserve |
 | `/leaderboard` | Leaderboard | wallets scored against resolved outcomes |
 | `/live` | Live | settlements arriving from the DON, read from logs every six seconds |
 
