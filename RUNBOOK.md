@@ -1370,7 +1370,10 @@ read the API (no 429), agreed on Como 1907 v Man United, and sent tx
 `0x017c87d5…` with a 4.4M limit; it spent 4,269,890 and the forwarder recorded
 `result = false`. ~942k gas locally became more than 4.27M on Sepolia — about
 4.5x, more than the 3.5x a single `newMarket` shows, because a match is mostly
-fresh storage. Raised to 7M per match (workflow `0057d6e8…`).
+fresh storage. Raised to 7M per match (workflow `0057d6e8…`); **proven at
+18:31 UTC**: tx `0x2e94d53d…`, `ReportProcessed(result = true)`, 4,449,350 gas
+— match #0, Como 1907 v Man United (CL, 21 Oct 16:45 UTC), markets 0–2 opening
+at 45 / 27 / 28%.
 
 **Measured quirks:**
 
