@@ -1298,6 +1298,11 @@ once, and sends up to two unopened slots, soonest-closing first, with
 liquidity). Strikes come from the feeds in `priceFeeds`, normalised to 8
 decimals and rounded to `strikeStep`. At most 1 + 1 + 2 = 4 chain reads.
 
+**Proven for a second kind at 17:31 UTC on 2026-10-20**, the new contract's
+first run: tx `0x5f6f16a7…`, `ReportProcessed(result = true)`, 1,692,037 gas
+for a BTC hourly market and stock #5, "Will gold (XAU) be at or above $4,120
+at 20:00 UTC on Oct 20?". Workflow ID `00d77ac2…`.
+
 **Two schedulers.** The first, `0x8559…B01e` (2026-10-19), opened crypto only
 and ran unattended for a day, 28 markets. Its slots were `adopt`ed into this
 one (owner-only; it opens nothing) so none opened twice. The old contract is
