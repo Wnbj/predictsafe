@@ -41,6 +41,9 @@ staging-settings:
     # take the gateway's word. Verified 2026-09-18: eth_chainId returns 0x1.
     - chain-name: ethereum-mainnet
       url: https://ethereum-rpc.publicnode.com
+    # Base Sepolia, read by reserve-attestation for tokens moved there by CCIP.
+    - chain-name: ethereum-testnet-sepolia-base-1
+      url: https://sepolia.base.org
 
 # ==========================================================================
 production-settings:
@@ -53,4 +56,6 @@ production-settings:
     # take the gateway's word. Verified 2026-09-18: eth_chainId returns 0x1.
     - chain-name: ethereum-mainnet
       url: https://ethereum-rpc.publicnode.com
-
+    # Base Sepolia, read by reserve-attestation for tokens moved there by CCIP.
+    - chain-name: ethereum-testnet-sepolia-base-1
+      url: https://sepolia.base.org

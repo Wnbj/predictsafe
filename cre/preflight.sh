@@ -161,6 +161,19 @@ for key, label in (('flightContractAddress','flight'), ('cryptoContractAddress',
   echo
 fi
 
+# The confidential workflow (reserve-attestation) has its own name, so its
+# receiver is checked against that name rather than the settlement one.
+reserve_cfg="$(dirname "$0")/reserve-attestation/config.production.json"
+if [ "$TARGET" = "production" ] && [ -f "$reserve_cfg" ]; then
+  att=$(python3 -c "import json; print(json.load(open('$reserve_cfg')).get('attestationAddress') or '')")
+  reserve_name=$(python3 -c "import hashlib; print('0x' + hashlib.sha256(b'predictsafe-reserve').hexdigest()[:10].encode().hex())")
+  echo "  reserve  $att  (workflow predictsafe-reserve, confidential)"
+  check "workflow name" "$(cast call "$att" 'getExpectedWorkflowName()(bytes10)' --rpc-url "$RPC" 2>&1)" "$reserve_name"
+  check "author"        "$(cast call "$att" 'getExpectedAuthor()(address)'      --rpc-url "$RPC" 2>&1)" "$EXPECT_AUTHOR"
+  check "forwarder"     "$(cast call "$att" 'getForwarderAddress()(address)'    --rpc-url "$RPC" 2>&1)" "$EXPECT_FORWARDER"
+  echo
+fi
+
 # The scheduler opens markets on the contracts it was built with. One pointed
 # elsewhere opens markets that no handler settles.
 scheduler=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('schedulerContractAddress') or '')")

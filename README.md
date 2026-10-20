@@ -97,6 +97,7 @@ through **Chainlink CCIP** — see
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
 | MarketScheduler | `0x5A3da37c424b7957F6DE67937Bc447a7Fa104B6B` |
 | SportsMarket | `0xF30D56E3586091dFe63B74338a194d37Cef80906` |
+| ReserveAttestation (confidential workflow) | `0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -292,7 +293,27 @@ and places the sell order the moment they land. It fills at the next new
 price like any other order and pays mUSDC on Sepolia. Anything that cannot
 become a sale — an unknown token, an asset no longer listed — is handed to the
 sender rather than reverted, because a reverted message leaves its tokens
-waiting for someone to execute it by hand.
+waiting for someone to execute it by hand. Proven 2026-10-19 21:35 UTC: a
+sale of 0.004936 sXAU sent from Base Sepolia arrived as order #0
+(`CcipSellPlaced`), filled at the next gold price and paid 20.38 mUSDC.
+
+### Proof of backing without the balance: a confidential workflow
+
+The exchange's tokens are claims on a reserve. On chain the reserve is public;
+a real tokenized fund, though, holds its backing with a custodian, and the
+custodian's account is exactly what must NOT be published — balance, account,
+credentials. `cre/reserve-attestation` is a **Chainlink Confidential
+Workflow**: its handler runs inside a TEE. It reads what the tokens are worth
+from both chains on the DON (public anyway), then — inside the enclave —
+unseals the custodian's API key from the Vault DON, fetches the account, and
+compares. Only a coverage band crosses back and goes on chain: below 100%,
+≥100%, ≥150%, ≥200%. An exact ratio would leak the balance, because the
+obligations it is divided by are public. The Trade page shows the band under
+the reserve.
+
+What is not confidential, said plainly: the workflow's code (the DON hands the
+binary to the enclave) and anything it logs. The custodian here is a demo API
+on the same Vercel deployment.
 
 ### Football: three AMM markets per match
 

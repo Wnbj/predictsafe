@@ -35,6 +35,13 @@ export const AMM_MARKET_ADDRESS = (import.meta.env.VITE_AMM_MARKET_ADDRESS ??
 export const SPORTS_MARKET_ADDRESS = (import.meta.env.VITE_SPORTS_MARKET_ADDRESS ??
   "0xF30D56E3586091dFe63B74338a194d37Cef80906") as `0x${string}`;
 
+/**
+ * Where the confidential workflow (cre/reserve-attestation) records whether
+ * the exchange is backed off-chain — as a coverage band, never a balance.
+ */
+export const RESERVE_ATTESTATION_ADDRESS = (import.meta.env.VITE_RESERVE_ATTESTATION_ADDRESS ??
+  "0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB") as `0x${string}`;
+
 export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
   "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340") as `0x${string}`;
 

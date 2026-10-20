@@ -1,0 +1,23 @@
+# ==========================================================================
+# reserve-attestation — a CONFIDENTIAL workflow (handlerInTee).
+# A separate workflow from settlement: that one is at the ten-trigger limit,
+# and this one's handler runs in an enclave. Its own name, so its own receiver.
+# ==========================================================================
+staging-settings:
+  user-workflow:
+    workflow-name: "predictsafe-reserve-staging"
+    deployment-registry: "private"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.staging.json"
+    secrets-path: "../secrets.yaml"
+
+# ==========================================================================
+production-settings:
+  user-workflow:
+    workflow-name: "predictsafe-reserve"
+    deployment-registry: "private"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.production.json"
+    secrets-path: "../secrets.yaml"

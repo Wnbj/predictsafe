@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { Address } from "viem";
 import { txLabel } from "../lib/toasts";
 import { ASSET_IMAGES } from "../lib/categories";
-import { EXCHANGE_ADDRESS, addressUrl } from "../lib/config";
+import { EXCHANGE_ADDRESS, RESERVE_ATTESTATION_ADDRESS, addressUrl } from "../lib/config";
 import { formatRelative, formatToken, shortAddress } from "../lib/format";
 import { waitForTx } from "../lib/chain";
 import {
@@ -21,6 +21,7 @@ import {
 import type { WalletState } from "../hooks/useWallet";
 import { useExchange } from "../hooks/useExchange";
 import { useBaseBalances, useBaseSupply } from "../hooks/useBridge";
+import { BAND_LABEL, useReserveAttestation } from "../hooks/useReserveAttestation";
 import { TradeForm } from "../components/TradeForm";
 import { BridgeDialog, type BridgeAsset } from "../components/BridgeDialog";
 import { formatDollars, formatUnitsShort } from "../components/walletParts";
@@ -493,6 +494,52 @@ function Reserve({ state }: { state: ExchangeState }) {
         out” counts both chains, at the latest prices: a token moved to Base Sepolia is still a
         claim on this reserve.
       </p>
+      <OffChainBacking />
     </section>
+  );
+}
+
+/**
+ * The second, off-chain answer to "is this backed?" — from a custodian's
+ * account, read by a Chainlink CONFIDENTIAL workflow inside a TEE. What
+ * reaches the chain, and this page, is a band; the balance stays in the
+ * enclave, and no one running a node ever sees it.
+ */
+function OffChainBacking() {
+  const att = useReserveAttestation();
+  const now = Math.floor(Date.now() / 1000);
+  return (
+    <div className="backing">
+      <div className="backing-head">
+        <span className="backing-lock" aria-hidden="true">🔒</span>
+        <div>
+          <div style={{ fontWeight: 500 }}>Off-chain backing</div>
+          <div className="muted" style={{ fontSize: 12 }}>
+            A custodian account, checked inside a TEE by a Chainlink confidential workflow
+          </div>
+        </div>
+        <span
+          className={`wallet-status ${
+            att === undefined ? "neutral" : att === null ? "neutral" : att.band >= 1 ? "done" : "lost"
+          }`}
+          style={{ marginLeft: "auto" }}
+        >
+          {att === undefined ? "…" : att === null ? "Not attested yet" : BAND_LABEL[att.band]}
+        </span>
+      </div>
+      {att && (
+        <div className="muted-strong" style={{ fontSize: 11 }}>
+          Against {formatToken(att.obligations)} of tokens · balance as of {formatRelative(att.balanceAsOf, now)} ·
+          attested {formatRelative(att.attestedAt, now)} · {att.count} attestation{att.count === 1 ? "" : "s"} ·{" "}
+          <a href={addressUrl(RESERVE_ATTESTATION_ADDRESS)} target="_blank" rel="noreferrer">
+            contract ↗
+          </a>
+        </div>
+      )}
+      <div className="muted-strong" style={{ fontSize: 11 }}>
+        Only the band is published. An exact ratio would give the balance away — the tokens it is measured against
+        are public — so the account, the key and the balance never leave the enclave.
+      </div>
+    </div>
   );
 }
