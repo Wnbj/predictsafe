@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Nav } from "./components/Nav";
 import { SpotProvider } from "./hooks/useSpot";
 import { useWallet } from "./hooks/useWallet";
@@ -7,13 +7,16 @@ import { useRouter } from "./lib/router";
 import { Landing } from "./views/Landing";
 import { Markets } from "./views/Markets";
 import { Detail } from "./views/Detail";
-import { Portfolio } from "./views/Portfolio";
 import { MarketsSkeleton } from "./components/MarketsSkeleton";
 import { Toaster } from "./components/Toaster";
-import { Leaderboard } from "./views/Leaderboard";
-import { Live } from "./views/Live";
-import { Trade } from "./views/Trade";
 import type { View } from "./lib/view";
+
+// Pages most visits never open load on demand, so the first paint of the
+// board does not wait for them.
+const Trade = lazy(() => import("./views/Trade").then((m) => ({ default: m.Trade })));
+const Portfolio = lazy(() => import("./views/Portfolio").then((m) => ({ default: m.Portfolio })));
+const Live = lazy(() => import("./views/Live").then((m) => ({ default: m.Live })));
+const Leaderboard = lazy(() => import("./views/Leaderboard").then((m) => ({ default: m.Leaderboard })));
 import { MarketStatus } from "./lib/types";
 import { eventKeyFor } from "./lib/events";
 
@@ -167,6 +170,7 @@ export default function App() {
         </div>
       )}
 
+      <Suspense fallback={<MarketsSkeleton />}>
       {view === "trade" ? (
         // Outside the markets gate: the exchange reads its own contract and
         // has no reason to wait for every market to load first.
@@ -249,6 +253,7 @@ export default function App() {
           )}
         </>
       )}
+      </Suspense>
       <Toaster />
     </SpotProvider>
   );

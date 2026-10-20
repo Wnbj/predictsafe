@@ -2011,3 +2011,21 @@ input:focus {
   background: var(--color-accent-900);
   font-size: 15px;
 }
+
+/* One tick per hourly attestation, coloured by band: a run of green is the
+   claim that the backing is checked again and again, not once. */
+.backing-history {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.backing-tick {
+  width: 8px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--color-neutral-700);
+}
+.backing-tick.band-0 { background: var(--color-negative); }
+.backing-tick.band-1 { background: color-mix(in srgb, #9fd8b5 55%, transparent); }
+.backing-tick.band-2 { background: color-mix(in srgb, #9fd8b5 80%, transparent); }
+.backing-tick.band-3 { background: #9fd8b5; }

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "lint": "eslint .",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -18,10 +19,15 @@
     "viem": "2.21.55"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.1",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
     "@vitejs/plugin-react": "4.3.4",
+    "eslint": "9.39.1",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "globals": "16.4.0",
     "typescript": "5.6.3",
+    "typescript-eslint": "8.46.2",
     "vite": "5.4.11",
     "vitest": "^4.1.10"
   }

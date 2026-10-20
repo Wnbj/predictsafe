@@ -42,8 +42,11 @@ export const SPORTS_MARKET_ADDRESS = (import.meta.env.VITE_SPORTS_MARKET_ADDRESS
 export const RESERVE_ATTESTATION_ADDRESS = (import.meta.env.VITE_RESERVE_ATTESTATION_ADDRESS ??
   "0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB") as `0x${string}`;
 
+// The fourth exchange, 2026-10-20: a cancel after a week fills at a price
+// that is already waiting instead of refunding. Same tokens; the third
+// (0xaf76…a340) lost its mint and burn roles and keeps only its old reserve.
 export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
-  "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340") as `0x${string}`;
+  "0x46C415C1Ff9A45C291F78cFEe555e6752ddDcf36") as `0x${string}`;
 
 export const TOKEN_ADDRESS = (import.meta.env.VITE_TOKEN_ADDRESS ??
   "0xcd123a8d74ef062dddd2287e87bc88eb3b208b54") as `0x${string}`;

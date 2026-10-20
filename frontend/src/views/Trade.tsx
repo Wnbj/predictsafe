@@ -3,7 +3,7 @@ import type { Address } from "viem";
 import { txLabel } from "../lib/toasts";
 import { ASSET_IMAGES } from "../lib/categories";
 import { EXCHANGE_ADDRESS, RESERVE_ATTESTATION_ADDRESS, addressUrl } from "../lib/config";
-import { formatRelative, formatToken, shortAddress } from "../lib/format";
+import { formatClock, formatRelative, formatToken, shortAddress } from "../lib/format";
 import { waitForTx } from "../lib/chain";
 import {
   canCancel,
@@ -21,7 +21,7 @@ import {
 import type { WalletState } from "../hooks/useWallet";
 import { useExchange } from "../hooks/useExchange";
 import { useBaseBalances, useBaseSupply } from "../hooks/useBridge";
-import { BAND_LABEL, useReserveAttestation } from "../hooks/useReserveAttestation";
+import { BAND_LABEL, nextAttestation, useReserveAttestation } from "../hooks/useReserveAttestation";
 import { TradeForm } from "../components/TradeForm";
 import { BridgeDialog, type BridgeAsset } from "../components/BridgeDialog";
 import { formatDollars, formatUnitsShort } from "../components/walletParts";
@@ -526,6 +526,20 @@ function OffChainBacking() {
         >
           {att === undefined ? "…" : att === null ? "Not attested yet" : BAND_LABEL[att.band]}
         </span>
+      </div>
+      {att && att.history.length > 1 && (
+        <div className="backing-history" aria-label="Recent attestations">
+          {att.history.map((h) => (
+            <span
+              key={h.balanceAsOf}
+              className={`backing-tick band-${h.band}`}
+              title={`${formatClock(h.balanceAsOf)} · ${BAND_LABEL[h.band]}`}
+            />
+          ))}
+        </div>
+      )}
+      <div className="muted-strong" style={{ fontSize: 11 }}>
+        Checked every hour · next at {formatClock(nextAttestation(now))} ({formatRelative(nextAttestation(now), now)})
       </div>
       {att && (
         <div className="muted-strong" style={{ fontSize: 11 }}>

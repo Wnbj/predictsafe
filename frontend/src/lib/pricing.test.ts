@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  slippageBound,
   claimablePayout,
   estimatePayout,
   impliedYesPercent,
@@ -250,5 +251,19 @@ describe("isUnstakedAndResolved", () => {
     const empty = { ...amm0, status: MarketStatus.Settled, collateral: 0n } as Market;
     expect(isUnstakedAndResolved(seeded)).toBe(false);
     expect(isUnstakedAndResolved(empty)).toBe(true);
+  });
+});
+
+describe("slippage bound", () => {
+  it("is 1% under the quote the trader saw, not under a fresh one", () => {
+    expect(slippageBound(1_000n, 995n)).toEqual({ minOut: 990n });
+  });
+
+  it("refuses to send when the pool has moved past it, so the trader sees the new number", () => {
+    expect(slippageBound(1_000n, 980n)).toEqual({ moved: true });
+  });
+
+  it("falls back to the fresh quote when nothing was shown yet", () => {
+    expect(slippageBound(null, 1_000n)).toEqual({ minOut: 990n });
   });
 });

@@ -20,6 +20,18 @@
  * Demo data. Not a real account.
  */
 
+import { createHash, timingSafeEqual } from "node:crypto";
+
+/**
+ * Whether the presented header carries the key, compared in constant time.
+ * Both sides are hashed first so the comparison never depends on, or reveals,
+ * the key's length.
+ */
+const holdsKey = (header: string, key: string): boolean => {
+  const digest = (s: string) => createHash("sha256").update(s).digest();
+  return timingSafeEqual(digest(header), digest(`Bearer ${key}`));
+};
+
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -31,7 +43,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!key) return reply(503, { error: "custodian not configured" });
 
   const auth = request.headers.get("authorization") ?? "";
-  if (auth !== `Bearer ${key}`) return reply(401, { error: "unauthorized" });
+  if (!holdsKey(auth, key)) return reply(401, { error: "unauthorized" });
 
   const hour = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000);
   return reply(200, {

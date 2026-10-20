@@ -8,7 +8,7 @@ import {
   impliedYesPercent,
   isOpenForStaking,
   canRequestSettlement,
-
+  slippageBound,
 } from "../lib/pricing";
 import {
   quoteAmmSell,
@@ -172,14 +172,22 @@ export function TradePanel({
     }
   };
 
+  /** The pool moved more than 1% since the quote was shown: show the new one instead of sending. */
+  const priceMoved = (out: bigint, fee: bigint) => {
+    setQuotedShares(out);
+    setQuotedFee(fee);
+    setError("The price moved since this quote. Check the new numbers above and press again.");
+  };
+
   const doBuy = async () => {
     if (!account || !amount) return;
-    // Re-quote immediately before submitting and allow 1% below it. Quoting at
-    // render time and submitting minutes later would either revert constantly
-    // or, with no bound at all, fill at whatever the curve had moved to.
+    // Bounded 1% under the quote on screen, not under a fresh one: see
+    // slippageBound. If the pool has already moved past that, show the new
+    // quote and let the trader press again.
     const fresh = await quoteAmmShares(market, side === "yes", amount);
-    const minOut = (fresh.shares * 99n) / 100n;
-    await runApproved(ammBuyCall(market, side === "yes", amount, minOut));
+    const bound = slippageBound(quotedShares, fresh.shares);
+    if ("moved" in bound) return priceMoved(fresh.shares, fresh.fee);
+    await runApproved(ammBuyCall(market, side === "yes", amount, bound.minOut));
   };
 
   const doSell = async () => {
@@ -189,8 +197,9 @@ export function TradePanel({
     // contract's own bookkeeping, not by an ERC-20 the pool must be allowed to
     // move.
     const fresh = await quoteAmmSell(market, side === "yes", amount);
-    const minOut = (fresh.collateral * 99n) / 100n;
-    await run("staking", (a) => sendAmmSell(a, market, side === "yes", amount, minOut));
+    const bound = slippageBound(quotedShares, fresh.collateral);
+    if ("moved" in bound) return priceMoved(fresh.collateral, fresh.fee);
+    await run("staking", (a) => sendAmmSell(a, market, side === "yes", amount, bound.minOut));
   };
 
   const doStake = async () => {

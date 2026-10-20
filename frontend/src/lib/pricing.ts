@@ -176,3 +176,19 @@ export function claimablePayout(
   }
   return 0n;
 }
+
+/**
+ * The least an AMM trade may return: 1% under the quote the trader was SHOWN.
+ *
+ * The bound used to be 1% under a quote fetched again at the moment of
+ * signing — which protects against the pool moving during the signature, but
+ * not against it having moved since the trader read the number. A trade could
+ * then fill well below what was on screen, inside its own "1%" bound.
+ *
+ * If the fresh quote is already under the bound, nothing is sent: the caller
+ * shows the new quote and the trader decides again.
+ */
+export function slippageBound(shown: bigint | null, fresh: bigint): { minOut: bigint } | { moved: true } {
+  const minOut = ((shown ?? fresh) * 99n) / 100n;
+  return fresh < minOut ? { moved: true } : { minOut };
+}

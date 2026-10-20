@@ -182,19 +182,20 @@ function ConnectControl({ wallet }: { wallet: WalletState }) {
     wallet.setPickerOpen(typeof v === "function" ? v(wallet.pickerOpen) : v);
   const ref = useRef<HTMLDivElement>(null);
 
+  const setPickerOpen = wallet.setPickerOpen;
   useEffect(() => {
     if (!open) return;
     const onPointer = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) setPickerOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPickerOpen(false);
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, setPickerOpen]);
 
   const many = wallet.wallets.length > 1;
 
