@@ -112,8 +112,10 @@ and camera/microphone/location off. Checked with `curl -sI` on the live site.
 
 `vite.config.ts` puts viem and React in their own files and `App.tsx` loads
 Trade, Portfolio, Live and Leaderboard on demand: the board's first load is
-~150 kB compressed, and a deploy that changes only the app leaves the library
-files cached. `bun run lint` runs ESLint (recommended + React hook rules).
+~150 kB compressed, down from 173, and the files load in parallel. They do NOT
+stay cached across deploys — every name carries the commit, on purpose (see
+above) — so that is the trade made for never serving a stale entry.
+`bun run lint` runs ESLint (recommended + React hook rules).
 
 **The free tier is shared by every visitor**, and by your own local work. The
 app is sized for one person on it; several at once will see 429s and slow

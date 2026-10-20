@@ -24,8 +24,8 @@ export default defineConfig({
         entryFileNames: `assets/[name]-[hash]${suffix}.js`,
         chunkFileNames: `assets/[name]-[hash]${suffix}.js`,
         assetFileNames: `assets/[name]-[hash]${suffix}[extname]`,
-        // Libraries in their own files: they change far less often than the
-        // app, so a deploy does not make every visitor download them again.
+        // Libraries in their own files, loaded in parallel with the app. Not
+        // a cache win across deploys: every name carries the commit (above).
         manualChunks: (id) =>
           id.includes("node_modules/viem") || id.includes("node_modules/@noble") || id.includes("node_modules/abitype")
             ? "viem"
