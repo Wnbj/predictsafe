@@ -190,6 +190,7 @@ export const CATEGORIES: CategoryDef[] = [
     live: true,
     blurb: "Football: home win, draw or away win — opened and settled by the DON.",
     icon: sportsIcon,
+    image: img("sports.jpg"),
   },
   {
     id: "crypto",
