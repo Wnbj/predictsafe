@@ -56,6 +56,13 @@ export function formatDepartureDate(yyyymmdd: number): string {
   });
 }
 
+/**
+ * Every time in the app is shown in Bulgarian time, wherever the reader is —
+ * not the browser's zone. Contracts, questions on chain and settlement logs
+ * stay in UTC; this is only how they are displayed.
+ */
+export const APP_TIME_ZONE = "Europe/Sofia";
+
 export function formatTimestamp(seconds: number): string {
   if (!seconds) return "—";
   return new Date(seconds * 1000).toLocaleString(undefined, {
@@ -64,6 +71,60 @@ export function formatTimestamp(seconds: number): string {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: APP_TIME_ZONE,
+  });
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Sofia wall-clock parts of an instant, plus its zone name (EET or EEST). */
+function sofiaParts(ms: number): { hh: string; mm: string; month: string; day: number; zone: string } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: APP_TIME_ZONE,
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+      timeZoneName: "shortOffset",
+    })
+      .formatToParts(new Date(ms))
+      .map((p) => [p.type, p.value]),
+  );
+  return {
+    hh: parts.hour!,
+    mm: parts.minute!,
+    month: MONTHS[Number(parts.month) - 1]!,
+    day: Number(parts.day),
+    zone: parts.timeZoneName === "GMT+3" ? "EEST" : "EET",
+  };
+}
+
+/** "01:18 EEST" — the clock time of an instant in Bulgaria. */
+export function formatClock(seconds: number): string {
+  const p = sofiaParts(seconds * 1000);
+  return `${p.hh}:${p.mm} ${p.zone}`;
+}
+
+/**
+ * Questions name their moment in UTC ("at 22:18 UTC on Oct 13"), because that
+ * is the clock the contracts use. Shown, the same moment reads in Bulgarian
+ * time ("at 01:18 EEST on Oct 14"). The question carries no year, so the one
+ * closest to `nowSeconds` is taken.
+ */
+export function localTimes(text: string, nowSeconds = Date.now() / 1000): string {
+  return text.replace(/\b(\d{2}):(\d{2}) UTC on ([A-Z][a-z]{2}) (\d{1,2})\b/g, (whole, hh, mm, mon, day) => {
+    const month = MONTHS.indexOf(mon);
+    if (month < 0) return whole;
+    const now = nowSeconds * 1000;
+    const year = new Date(now).getUTCFullYear();
+    const ms = [year - 1, year, year + 1]
+      .map((y) => Date.UTC(y, month, Number(day), Number(hh), Number(mm)))
+      .reduce((best, t) => (Math.abs(t - now) < Math.abs(best - now) ? t : best));
+    const p = sofiaParts(ms);
+    return `${p.hh}:${p.mm} ${p.zone} on ${p.month} ${p.day}`;
   });
 }
 

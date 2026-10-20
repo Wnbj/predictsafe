@@ -13,6 +13,7 @@ import { getActiveProvider } from "./providers";
 import { showToast } from "./toasts";
 import { readSettlementLogs } from "./settlementEvents";
 import { categoryOf, syncLogs } from "./logScan";
+import { localTimes } from "./format";
 import {
   AMM_MARKET_ADDRESS,
   SPORTS_MARKET_ADDRESS,
@@ -272,7 +273,7 @@ async function readFlightMarkets(): Promise<Market[]> {
       key: marketKey("flights", i),
       contract: FLIGHT_MARKET_ADDRESS,
       categoryId: "flights",
-      question: t[0],
+      question: localTimes(t[0]),
       flightIata: t[1],
       departureDate: Number(t[2]),
       thresholdMinutes: Number(t[3]),
@@ -331,7 +332,7 @@ async function readCryptoMarkets(): Promise<Market[]> {
       key: marketKey("crypto", i),
       contract: CRYPTO_MARKET_ADDRESS,
       categoryId: "crypto",
-      question: c[0],
+      question: localTimes(c[0]),
       closeTime: Number(c[1]),
       settleAfter: Number(c[2]),
       status: Number(c[3]) as MarketStatus,
@@ -450,7 +451,7 @@ async function readFeedMarkets(
       key: marketKey(categoryId, i),
       contract: address,
       categoryId,
-      question: c[0],
+      question: localTimes(c[0]),
       closeTime: Number(c[1]),
       settleAfter: Number(c[2]),
       status: Number(c[3]) as MarketStatus,
@@ -521,7 +522,7 @@ async function readAmmPools(contract: typeof ammContract) {
 
     return {
       id: i,
-      question: t[0],
+      question: localTimes(t[0]),
       assetIndex: Number(t[1]),
       strikePrice: t[2],
       closeTime: Number(t[3]),

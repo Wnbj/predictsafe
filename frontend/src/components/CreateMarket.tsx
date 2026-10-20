@@ -8,6 +8,7 @@ import {
 } from "../lib/chain";
 import { cryptoMarketTerms, HORIZONS, roundStrike, STRIKE_STEP } from "../lib/createMarket";
 import type { WalletState } from "../hooks/useWallet";
+import { formatClock, localTimes } from "../lib/format";
 
 /**
  * Open a BTC or ETH price market from the app.
@@ -156,10 +157,10 @@ export function CreateMarket({
             fontSize: 13,
           }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{terms.question}</div>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>{localTimes(terms.question)}</div>
           <div className="muted">
             Staking closes {Math.round(horizon.closeBefore / 60)} min before expiry, at{" "}
-            {new Date(terms.closeTime * 1000).toISOString().slice(11, 16)} UTC.
+            {formatClock(terms.closeTime)}.
           </div>
         </div>
       )}
