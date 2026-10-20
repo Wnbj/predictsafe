@@ -3,7 +3,7 @@
   "custodianUrl": "https://predictsafe-psi.vercel.app/api/custodian",
   "secretId": "CUSTODIAN_API_KEY",
   "chainSelectorName": "ethereum-testnet-sepolia",
-  "exchangeAddress": "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340",
+  "exchangeAddress": "0x46C415C1Ff9A45C291F78cFEe555e6752ddDcf36",
   "attestationAddress": "0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB",
   "baseChainSelectorName": "ethereum-testnet-sepolia-base-1",
   "baseTokens": {

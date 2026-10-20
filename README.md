@@ -91,7 +91,7 @@ through **Chainlink CCIP** — see
 | ReserveMarket | `0xa768Be2741A0464b81606649eCa45bfF7aD4d939` |
 | AmmMarket | `0xc9961096dc98eE17eD28bB417BB726F1b64f84FF` |
 | MockUSDC | `0xcd123a8d74ef062dddd2287e87bc88eb3b208b54` |
-| AssetExchange | `0xaf764C8D21b2f057E5864125f9DB9c271ADfa340` |
+| AssetExchange | `0x46C415C1Ff9A45C291F78cFEe555e6752ddDcf36` |
 | sXAU / sCSPX (CCIP tokens) | `0x502640827C31ce347FBe42a5bD6e08Dc98C4a9E0` / `0x2f42A5233311B1Ee291Bfd958039A0449E1F03CD` |
 | sXAU / sCSPX on **Base Sepolia** | `0xc20BFD974F374669cAC5994D1E712F03BC102242` / `0x95f4f643654cf63171eD5a8d6751752Ba43793CA` |
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
@@ -335,7 +335,8 @@ match.
 a draw here whoever goes through on extra time or penalties — only then do the
 three questions cover every outcome exactly once. A postponed or cancelled
 match voids all three markets, and a void pays half a unit per share, as every
-AMM market does.
+AMM market does. A suspended one waits — they are often resumed the same day
+— and voids only if it still has no result three days after kickoff.
 
 Consensus is on a digest of the response — each match reduced to its id,
 kickoff, status, teams and ninety-minute score, sorted — because the raw body

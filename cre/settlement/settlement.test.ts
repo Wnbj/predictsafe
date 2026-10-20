@@ -46,6 +46,7 @@ import {
   footballToOpen,
   encodeSportsReport,
   sportsGasLimit,
+  reportOutcome,
   SPORTS_HOME,
   SPORTS_DRAW,
   SPORTS_AWAY,
@@ -1044,7 +1045,16 @@ describe("football", () => {
     expect(footballResult(match({ status: "IN_PLAY", homeGoals: null, awayGoals: null }), KICKOFF, soon)).toBeNull()
     expect(footballResult(undefined, KICKOFF, soon)).toBeNull()
     expect(footballResult(undefined, KICKOFF, days)).toBe(SPORTS_VOID)
-    expect(footballResult(match({ status: "SUSPENDED" }), KICKOFF, soon)).toBe(SPORTS_VOID)
+    // Suspended is often resumed the same day: wait, and give up only with the rest.
+    expect(footballResult(match({ status: "SUSPENDED", homeGoals: 1, awayGoals: 0 }), KICKOFF, soon)).toBeNull()
+    expect(footballResult(match({ status: "SUSPENDED", homeGoals: 1, awayGoals: 0 }), KICKOFF, days)).toBe(SPORTS_VOID)
+    expect(footballResult(match({ status: "AWARDED" }), KICKOFF, soon)).toBe(SPORTS_VOID)
+  })
+
+  test("a report never carries outcome 0, which a receiver would read as Unset", () => {
+    expect(() => reportOutcome(0)).toThrow()
+    expect(() => reportOutcome(4)).toThrow()
+    expect([1, 2, 3].map((o) => Number(reportOutcome(o)))).toEqual([1, 2, 3])
   })
 
   test("opens scheduled matches in the chosen competitions, far enough out, soonest first", () => {

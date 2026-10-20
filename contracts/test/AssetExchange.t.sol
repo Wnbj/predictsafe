@@ -369,6 +369,22 @@ contract AssetExchangeTest is Test {
         assertEq(sXAU.balanceOf(alice), tokens);
     }
 
+    function test_cancel_fillsInsteadIfANewPriceIsWaiting() public {
+        uint256 id = _buy(alice, 1_000e6);
+        _later();
+        gold.push(P1); // a new price nobody filled at
+        vm.warp(block.timestamp + ex.CANCEL_AFTER());
+
+        uint256 before = usdc.balanceOf(alice);
+        vm.prank(alice);
+        ex.cancel(id);
+        assertEq(uint8(ex.order(id).status), uint8(AssetExchange.Status.Filled), "filled, not refunded");
+        assertEq(ex.order(id).fillPrice, P1);
+        assertEq(usdc.balanceOf(alice), before, "no mUSDC back");
+        assertGt(sXAU.balanceOf(alice), 0, "the tokens instead");
+        assertEq(ex.escrowedUsdc(), 0);
+    }
+
     // --- the DON's route ------------------------------------------------------------
 
     function test_report_fillsLikeFill() public {

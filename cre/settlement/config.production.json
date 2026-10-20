@@ -12,7 +12,7 @@
   "reserveContractAddress": "0xa768Be2741A0464b81606649eCa45bfF7aD4d939",
   "ammContractAddress": "0xc9961096dc98eE17eD28bB417BB726F1b64f84FF",
   "sweepSchedule": "0 0,30 * * * *",
-  "exchangeContractAddress": "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340",
+  "exchangeContractAddress": "0x46C415C1Ff9A45C291F78cFEe555e6752ddDcf36",
   "exchangeSchedule": "0 5,15,25,35,45,55 * * * *",
   "keeperContractAddress": "0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43",
   "keeperSchedule": "0 2,12,22,32,42,52 * * * *",

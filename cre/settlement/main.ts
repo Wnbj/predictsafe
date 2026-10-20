@@ -236,6 +236,20 @@ const OUTCOME_VOID = 3
  */
 const abiInt = (n: number | bigint): number => BigInt(n) as unknown as number
 
+/**
+ * The outcome a settlement report carries, refused unless it is Yes, No or
+ * Void. The receivers decode 0 as `Unset` and would still mark the market
+ * settled — the AMM then pays the No side — so a 0 that slipped through a
+ * code path here would settle a market wrongly rather than fail. Checked once,
+ * at the four places an outcome is encoded.
+ */
+export const reportOutcome = (outcome: number): number => {
+  if (outcome !== OUTCOME_YES && outcome !== OUTCOME_NO && outcome !== OUTCOME_VOID) {
+    throw new Error(`Refusing to report outcome ${outcome}: only 1 (Yes), 2 (No) or 3 (Void)`)
+  }
+  return abiInt(outcome)
+}
+
 // --- event ABI ---------------------------------------------------------------
 // Must match FlightMarket.sol exactly.
 const settlementRequestedAbi = [
@@ -1194,7 +1208,7 @@ const settleFlightMarket = (runtime: Runtime<Config>, t: FlightTerms): string =>
   // goes negative, on a flight that landed early. See the note on `abiInt`.
   const encoded = encodeAbiParameters(
     parseAbiParameters("uint256 marketId, uint8 outcome, int32 delayMinutes, bytes32 evidenceHash"),
-    [marketId, abiInt(outcome), abiInt(observedDelay), evidenceHash],
+    [marketId, reportOutcome(outcome), abiInt(observedDelay), evidenceHash],
   )
 
   const signedReport = runtime.report(prepareReportRequest(encoded)).result()
@@ -1327,7 +1341,7 @@ const settleCryptoMarket = (runtime: Runtime<Config>, t: CryptoTerms): string =>
     parseAbiParameters(
       "uint256 marketId, uint8 outcome, int256 observedValue, bytes32 evidenceHash",
     ),
-    [marketId, abiInt(outcome), BigInt(observedPrice), evidenceHash],
+    [marketId, reportOutcome(outcome), BigInt(observedPrice), evidenceHash],
   )
 
   const signedReport = runtime.report(prepareReportRequest(encoded)).result()
@@ -1663,7 +1677,7 @@ const settleStockMarket = (runtime: Runtime<Config>, t: StockTerms): string => {
     parseAbiParameters(
       "uint256 marketId, uint8 outcome, int256 observedValue, bytes32 evidenceHash",
     ),
-    [marketId, abiInt(outcome), observedPrice, evidenceHash],
+    [marketId, reportOutcome(outcome), observedPrice, evidenceHash],
   )
 
   const signedReport = runtime.report(prepareReportRequest(encoded)).result()
@@ -2650,9 +2664,13 @@ export const footballDigest = (body: unknown): string => {
 
 /**
  * What to report for a match the contract is waiting on, or null to wait.
- * Postponed, cancelled, suspended or awarded matches void; a finished one
- * resolves on the score after ninety minutes; one the feed no longer lists,
- * days after kickoff, voids rather than holding money for ever.
+ * Postponed, cancelled or awarded matches void; a finished one resolves on
+ * the score after ninety minutes; one the feed no longer lists, days after
+ * kickoff, voids rather than holding money for ever.
+ *
+ * A SUSPENDED match waits like one in play: a match stopped for weather or
+ * crowd trouble is often resumed the same day and then has a real result.
+ * If it never finishes, the three-day give-up voids it.
  */
 export const footballResult = (
   m: FootballMatch | undefined,
@@ -2663,7 +2681,7 @@ export const footballResult = (
     return m && ["POSTPONED", "CANCELLED"].includes(m.status) ? SPORTS_VOID : null
   }
   if (!m) return nowSeconds > kickoff + SPORTS_GIVE_UP_SECONDS ? SPORTS_VOID : null
-  if (["POSTPONED", "CANCELLED", "SUSPENDED", "AWARDED"].includes(m.status)) return SPORTS_VOID
+  if (["POSTPONED", "CANCELLED", "AWARDED"].includes(m.status)) return SPORTS_VOID
   if (m.status !== "FINISHED" || m.homeGoals === null || m.awayGoals === null) {
     return nowSeconds > kickoff + SPORTS_GIVE_UP_SECONDS ? SPORTS_VOID : null
   }
@@ -2934,7 +2952,7 @@ const settleReserveMarket = (runtime: Runtime<Config>, t: ReserveTerms): string 
     parseAbiParameters(
       "uint256 marketId, uint8 outcome, int256 observedValue, bytes32 evidenceHash",
     ),
-    [marketId, abiInt(outcome), observedLevel, evidenceHash],
+    [marketId, reportOutcome(outcome), observedLevel, evidenceHash],
   )
 
   const signedReport = runtime.report(prepareReportRequest(encoded)).result()

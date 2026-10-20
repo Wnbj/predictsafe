@@ -73,8 +73,9 @@ showing.
 
 ## Hosting the frontend (Vercel)
 
-The app is a static site plus one function; `frontend/vercel.json` carries the
-build, so the project settings are only:
+The app is a static site plus two functions — `/api/rpc` and the demo
+custodian `/api/custodian` (see "Off-chain backing") — and `frontend/vercel.json`
+carries the build, so the project settings are only:
 
 | setting | value |
 |---|---|
@@ -103,6 +104,16 @@ that HTML in the browser cache under the script's name — a blank page that a
 reload did not fix. Assets now use Vercel's default (revalidate by ETag), a
 missing one is an honest 404, and `vite.config.ts` puts the commit in every
 file name so a bad entry cannot outlive the deploy it came from.
+
+**Every response carries `X-Frame-Options: DENY`** (and `frame-ancestors
+'none'`), so no other site can show this one in a frame and trick a visitor
+into clicking a wallet prompt through it, plus `nosniff`, a referrer policy
+and camera/microphone/location off. Checked with `curl -sI` on the live site.
+
+`vite.config.ts` puts viem and React in their own files and `App.tsx` loads
+Trade, Portfolio, Live and Leaderboard on demand: the board's first load is
+~150 kB compressed, and a deploy that changes only the app leaves the library
+files cached. `bun run lint` runs ESLint (recommended + React hook rules).
 
 **The free tier is shared by every visitor**, and by your own local work. The
 app is sized for one person on it; several at once will see 429s and slow
@@ -1050,7 +1061,7 @@ the node rather than passing it through workflow memory as a string. Not done.
 
 ## The asset exchange (synthetic gold and the S&P 500 ETF)
 
-`AssetExchange` at `0xaf764C8D21b2f057E5864125f9DB9c271ADfa340` sells synthetic
+`AssetExchange` at `0x46C415C1Ff9A45C291F78cFEe555e6752ddDcf36` sells synthetic
 tokens — `sXAU` `0x5026…a9E0`, `sCSPX` `0x2f42…03CD` — priced by Chainlink
 Data Feeds, against a reserve of mUSDC. It is not a market: nothing is
 settled, and `/live` does not scan it.
@@ -1061,8 +1072,12 @@ roles; a CCIP pool holds them too, which is what lets them travel to Base
 Sepolia (next section). A sell burns against the seller's ALLOWANCE — the app
 approves and places in one wallet prompt where it can.
 
-This is the third exchange, deployed 2026-10-19 by `DeployExchangeV3` to take
-sales that arrive over CCIP (next section). It runs on the SAME tokens: since
+This is the fourth exchange, deployed 2026-10-20 by the same
+`DeployExchangeV3` script (it is generic over `OLD_EXCHANGE`): a cancel after
+seven days now fills at a new price that is already waiting instead of
+refunding (below). The third, `0xaf76…a340` (2026-10-19), was the first to take
+sales that arrive over CCIP (next section); it lost its token roles to the
+fourth with no orders pending and keeps its old reserve, 10,175 mUSDC. It runs on the SAME tokens: since
 the CCT rebuild they are separate contracts, so every balance on both chains
 carried over, and the second exchange `0xd15C…4ac2` lost its MINTER and
 BURNER roles in the same script — it had no pending orders — so it can no
@@ -1128,6 +1143,11 @@ part. Top it up with `fundReserve(amount)` from any wallet.
 with `cancel(orderId)`: a buy returns its mUSDC in full, a sell re-mints its
 tokens. That covers a feed that stops and an aggregator upgrade, whose new phase
 restarts round numbering and is deliberately not searched.
+
+**If a new price IS waiting, `cancel` fills at it instead** (since the fourth
+exchange). Before, an order nobody had filled for a week — the DON down, say —
+let its trader read the price it would fill at and cancel only when that price
+was bad: a free option against the reserve.
 
 **Deploy** with `script/DeployExchangeCcip.s.sol` — three scripts, the next
 section has the whole sequence. `DeployExchangeSepolia` (`TOKEN`, `FORWARDER`,
@@ -1257,7 +1277,22 @@ for a market named twice because the finalized block had not caught up with
 the previous request; it costs a wasted report, not a wrong one.
 
 `dueMarkets` looks at the newest 40 markets per contract (`SCAN_BACK`). An
-older market still open past its time is weeks stale and is left to a person.
+older market still open past its time is left to a person — and that is a
+real limit, not only a stale-market one. **The scheduler opens ~32 crypto
+markets a day** (BTC hourly, ETH every four hours, both daily), and a daily
+market opens about twenty hours before it expires, so by its expiry ~28 newer
+crypto markets exist: inside 40, but not by much. Another frequent rule on the
+same contract (ETH hourly, say) would push the daily markets past the window
+and they would never be asked for automatically, with nothing failing
+anywhere. Count before adding a rule; the fix is a keeper that scans by
+expiry rather than by id. To check nothing has slipped out:
+
+```bash
+# any crypto market past settleAfter that nobody asked to settle (status 0 or 1)
+for i in $(seq $(( $(cast call $CRYPTO 'marketCount()(uint256)' --rpc-url $RPC) - 1 )) -1 0); do
+  cast call $CRYPTO 'core(uint256)(string,uint64,uint64,uint8,uint8,bytes32,int256,uint256,uint256)' $i --rpc-url $RPC | sed -n '3p;4p' | paste -sd' ' | awk -v id=$i -v now=$(date +%s) '$1<now && ($3==0||$3==1){print "overdue", id}'
+done
+```
 
 ```bash
 K=0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43
@@ -1386,6 +1421,71 @@ at 45 / 27 / 28%.
 - A match the feed no longer lists three days after kickoff voids rather than
   holding money for ever.
 
+## Off-chain backing (confidential workflow)
+
+A SEPARATE workflow, `predictsafe-reserve` (`cre/reserve-attestation`), not a
+handler in `predictsafe-settlement`: that one is at the ten-trigger limit, and
+this one's handler runs in a TEE (`handlerInTee`, AWS Nitro, us-west-2). It has
+its own name, so its own receiver: `ReserveAttestation`
+`0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB`. Workflow ID `006c8ef3…`,
+deployed 2026-10-20 21:50 UTC, cron `0 45 * * * *`.
+
+**Per run:** on the DON, `assetCount`/`asset(i)` on the exchange, each feed's
+`latestRoundData`, each token's `totalSupply` on Sepolia AND on Base Sepolia,
+all at finalized blocks — that sum is the obligations. Inside the enclave, the
+Vault secret `CUSTODIAN_API_KEY`, one GET to the custodian with it as a bearer
+token, and the comparison. Back on the DON, a report of
+`(band, obligations, balanceAsOf, keccak256(apiKey ‖ body))`. Nothing is
+logged: a log leaves the enclave.
+
+**Three pieces, all of which must agree:**
+
+| where | what |
+|---|---|
+| `cre/.env` | `CRE_SECRET_CUSTODIAN_API_KEY` — generated, the only copy on this machine |
+| Vault DON | `CUSTODIAN_API_KEY`, namespace `main`, uploaded from `secrets.custodian.yaml` |
+| Vercel env | `CUSTODIAN_API_KEY` (the same value) and `CUSTODIAN_BALANCE` (USD decimal) |
+
+```bash
+cd cre && cre secrets create secrets.custodian.yaml --secrets-auth browser --target production-settings
+```
+
+To rotate the key, change it in all three, using `cre secrets update` for the
+vault. A mismatch shows as `Custodian answered HTTP 401` in
+`cre execution logs` and no attestation on chain.
+
+**Check the custodian without printing the key:** without the header
+`/api/custodian` must answer 401 (503 means Vercel has no key at all); with
+`Authorization: Bearer $CRE_SECRET_CUSTODIAN_API_KEY` sourced from `cre/.env`,
+200 and fields `account, asOf, balance, currency, custodian`.
+
+**Showing a different band** needs no workflow change: set `CUSTODIAN_BALANCE`
+in Vercel, redeploy, and the next :45 run reports it. At ~483 mUSDC of tokens
+outstanding: below ~483 is red, ~483–724 is ≥100%, ~724–965 ≥150%, above that
+≥200%. The bands are coarse on purpose — `obligations` is on chain, so an exact
+ratio would publish the balance.
+
+**What the obligations miss.** Tokens in flight over CCIP — burned on one
+chain, not yet minted on the other, ~15 minutes — are counted nowhere, and
+the two chains are read at their own finalized blocks, minutes apart, so a
+transfer between those moments can be counted twice or not at all. Both move
+the figure by at most what is in flight; the band is coarse enough that it
+has never mattered here, but it is not an exact snapshot.
+
+**`asOf` is the start of the hour**, so every enclave and every retry in an
+hour sees identical bytes. The contract refuses a report older than the latest
+(`Stale`) or more than ten minutes in the future.
+
+**Verify a run:** `count()` and `latest()` on `ReserveAttestation`, the
+`Attested` event, and — as for every receiver — `ReportProcessed(result=true)`
+on the forwarder in the same tx. `cre execution list predictsafe-reserve` for
+the DON's side. Stop it with `cre workflow pause ./reserve-attestation --target
+production-settings`.
+
+`simulate` works before any upload (it reads the key from `cre/.env`) and
+prints a banner saying it is not a real TEE. Against the staging config it
+expects a local custodian on `:8787`; against production it calls Vercel.
+
 ## Reserve markets (Proof of Reserve / fund NAV)
 
 `ReserveMarket.sol` at `0xa768Be2741A0464b81606649eCa45bfF7aD4d939`, with stETH
@@ -1506,6 +1606,31 @@ share. Two properties fall out of that rather than needing machinery:
 slippage bound, so a fee computed even one rounding step differently shows up as
 trades that fail for no visible reason — or gets absorbed silently inside the
 bound and never noticed.
+
+### When the DON will not settle: the owner voids
+
+`AmmMarket` and `SportsMarket` have no `ownerVoid` (the parimutuel contracts
+do). They do not need a redeploy for one: every receiver lets its owner name
+its forwarder, so the owner can stand in as the forwarder for ONE report — a
+Void — and hand the role back. Same trust as `ownerVoid`, written down instead
+of improvised. Void pays half a unit per share, either side.
+
+```bash
+cd contracts
+# an AMM market (asks for settlement first if it is still Open past settleAfter)
+DEPLOYER_PK=0x… MARKET=<AmmMarket> KIND=amm MARKET_ID=<id> \
+  forge script script/OwnerVoid.s.sol --rpc-url $RPC --broadcast --slow --skip-simulation
+# all three markets of a football match
+DEPLOYER_PK=0x… MARKET=<SportsMarket> KIND=sports MATCH_ID=<football-data id> \
+  forge script script/OwnerVoid.s.sol --rpc-url $RPC --broadcast --slow --skip-simulation
+# then: the DON's forwarder must be back
+cast call <market> 'getForwarderAddress()(address)' --rpc-url $RPC   # 0xF8344CFd…4482
+```
+
+Three transactions. While the forwarder is the owner, a DON report to that
+contract is refused, and the next sweep retries it. Use it only when a market
+is stuck for good — the workflow already voids matches the feed loses (three
+days) and crypto prices no venue can answer.
 
 ### Settlement reuses the crypto handler
 

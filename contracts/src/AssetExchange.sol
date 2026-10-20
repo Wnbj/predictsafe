@@ -362,13 +362,24 @@ contract AssetExchange is ReceiverTemplate, IAny2EVMMessageReceiver {
         return interfaceId == type(IAny2EVMMessageReceiver).interfaceId || super.supportsInterface(interfaceId);
     }
 
-    /// Take back an order that has waited `CANCEL_AFTER` without a new price.
+    /**
+     * Take back an order that has waited `CANCEL_AFTER` without a new price.
+     *
+     * If a new price HAS appeared and simply nobody filled at it, the order
+     * fills there instead of coming back. Otherwise a trader whose order sat
+     * unfilled for a week — the keeper down, say — could look at the price
+     * it would fill at and cancel only when it was a bad one: a free option
+     * against the reserve. Cancelling must not be a way to pick the better
+     * of the two outcomes.
+     */
     function cancel(uint256 orderId) external {
         Order storage o = _orders[orderId];
         if (o.trader != msg.sender) revert NotYourOrder();
         if (o.status != Status.Pending) revert NotPending();
         if (block.timestamp < o.placedAt + CANCEL_AFTER) revert TooEarlyToCancel();
-        _refund(orderId, RefundReason.Timeout);
+        (bool found, uint80 round, int256 price) = _firstNewPrice(orderId);
+        if (found) _settle(orderId, round, price);
+        else _refund(orderId, RefundReason.Timeout);
     }
 
     // --- filling -----------------------------------------------------------
