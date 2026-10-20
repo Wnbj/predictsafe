@@ -187,8 +187,8 @@ export const CATEGORIES: CategoryDef[] = [
     id: "sports",
     name: "Sports",
     tagStyle: TAG.accent2,
-    live: false,
-    blurb: "Match and season outcomes.",
+    live: true,
+    blurb: "Football: home win, draw or away win — opened and settled by the DON.",
     icon: sportsIcon,
   },
   {

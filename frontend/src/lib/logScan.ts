@@ -2,6 +2,7 @@ import { type Log } from "viem";
 import { REPORT_PROCESSED_EVENT } from "./forwarderEvent";
 import {
   AMM_MARKET_ADDRESS,
+  SPORTS_MARKET_ADDRESS,
   CRYPTO_MARKET_ADDRESS,
   DEPLOY_BLOCK,
   FLIGHT_MARKET_ADDRESS,
@@ -62,6 +63,7 @@ export const CONTRACT_CATEGORY = new Map<string, CategoryId>([
   [STOCK_MARKET_ADDRESS.toLowerCase(), "stocks"],
   [RESERVE_MARKET_ADDRESS.toLowerCase(), "reserves"],
   [AMM_MARKET_ADDRESS.toLowerCase(), "amm"],
+  [SPORTS_MARKET_ADDRESS.toLowerCase(), "sports"],
 ]);
 
 export const RECEIVER_ADDRESSES = [
@@ -70,6 +72,11 @@ export const RECEIVER_ADDRESSES = [
   STOCK_MARKET_ADDRESS,
   RESERVE_MARKET_ADDRESS,
   AMM_MARKET_ADDRESS,
+  // Deployed 2026-10-20, after the shipped snapshot and most cached scans: its
+  // logs all lie ahead of every cursor, so adding it here needs no rescan. It
+  // is deliberately NOT in logCache's fingerprint, which would throw every
+  // visitor's cache away for a contract with nothing behind the cursor.
+  SPORTS_MARKET_ADDRESS,
 ] as const;
 
 /**

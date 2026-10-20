@@ -7,6 +7,7 @@ import {
   parseEventLogs,
   type Address,
   type Chain,
+  parseAbi,
 } from "viem";
 import { getActiveProvider } from "./providers";
 import { showToast } from "./toasts";
@@ -14,6 +15,7 @@ import { readSettlementLogs } from "./settlementEvents";
 import { categoryOf, syncLogs } from "./logScan";
 import {
   AMM_MARKET_ADDRESS,
+  SPORTS_MARKET_ADDRESS,
   chain,
   CRYPTO_MARKET_ADDRESS,
   FLIGHT_MARKET_ADDRESS,
@@ -38,6 +40,8 @@ import {
   type Market,
   type SettledEvent,
   type TradeEvent,
+  type SportsMarket,
+  isAmm,
 } from "./types";
 
 /**
@@ -215,6 +219,8 @@ const cryptoContract = { address: CRYPTO_MARKET_ADDRESS, abi: cryptoMarketAbi } 
 const stockContract = { address: STOCK_MARKET_ADDRESS, abi: stockMarketAbi } as const;
 const reserveContract = { address: RESERVE_MARKET_ADDRESS, abi: reserveMarketAbi } as const;
 const ammContract = { address: AMM_MARKET_ADDRESS, abi: ammMarketAbi } as const;
+/** SportsMarket IS an AmmMarket — the same ABI answers every call on it. */
+const sportsContract = { address: SPORTS_MARKET_ADDRESS, abi: ammMarketAbi } as const;
 const tokenContract = { address: TOKEN_ADDRESS, abi: mockUsdcAbi } as const;
 
 /** Market ids restart at 0 per contract, so identity has to carry the category. */
@@ -231,6 +237,8 @@ export function contractFor(market: Market) {
       return reserveContract;
     case "amm":
       return ammContract;
+    case "sports":
+      return sportsContract;
     default:
       return marketContract;
   }
@@ -463,10 +471,11 @@ async function readFeedMarkets(
   });
 }
 
-async function readAmmMarkets(): Promise<Market[]> {
+/** One AMM contract's markets as raw shared fields; the category decides the rest. */
+async function readAmmPools(contract: typeof ammContract) {
   const n = Number(
     (await publicClient.readContract({
-      ...ammContract,
+      ...contract,
       functionName: "marketCount",
     })) as bigint,
   );
@@ -474,9 +483,9 @@ async function readAmmMarkets(): Promise<Market[]> {
 
   const results = await publicClient.multicall({
     contracts: Array.from({ length: n }, (_, i) => i).flatMap((i) => [
-      { ...ammContract, functionName: "terms" as const, args: [BigInt(i)] as const },
-      { ...ammContract, functionName: "poolState" as const, args: [BigInt(i)] as const },
-      { ...ammContract, functionName: "yesPriceBps" as const, args: [BigInt(i)] as const },
+      { ...contract, functionName: "terms" as const, args: [BigInt(i)] as const },
+      { ...contract, functionName: "poolState" as const, args: [BigInt(i)] as const },
+      { ...contract, functionName: "yesPriceBps" as const, args: [BigInt(i)] as const },
     ]),
     allowFailure: false,
   });
@@ -512,11 +521,8 @@ async function readAmmMarkets(): Promise<Market[]> {
 
     return {
       id: i,
-      key: marketKey("amm", i),
-      contract: AMM_MARKET_ADDRESS,
-      categoryId: "amm",
       question: t[0],
-      asset: ASSET_SYMBOLS[Number(t[1])] ?? "BTC",
+      assetIndex: Number(t[1]),
       strikePrice: t[2],
       closeTime: Number(t[3]),
       expiryTime: Number(t[4]),
@@ -539,9 +545,74 @@ async function readAmmMarkets(): Promise<Market[]> {
       // impliedYesPercent, which special-cases this category for that reason.
       yesPool: p.yesReserve,
       noPool: p.noReserve,
-    } satisfies Market;
+    };
   });
 }
+
+async function readAmmMarkets(): Promise<Market[]> {
+  return (await readAmmPools(ammContract)).map(({ assetIndex, ...m }) => ({
+    ...m,
+    key: marketKey("amm", m.id),
+    contract: AMM_MARKET_ADDRESS,
+    categoryId: "amm" as const,
+    asset: ASSET_SYMBOLS[assetIndex] ?? "BTC",
+  }) satisfies Market);
+}
+
+const sportsViewsAbi = parseAbi([
+  "struct MatchInfo { uint64 matchId; uint64 kickoff; string competition; string home; string away; uint256 firstMarketId; uint8 result; }",
+  "function matchOf(uint256 marketId) view returns (MatchInfo info, uint8 outcome)",
+]);
+
+/** What a sports market asks, in words: the contract stores no question for them. */
+export function sportsQuestion(home: string, away: string, outcome: 1 | 2 | 3): string {
+  if (outcome === 1) return `Will ${home} beat ${away}?`;
+  if (outcome === 3) return `Will ${away} win at ${home}?`;
+  return `Will ${home} v ${away} end in a draw?`;
+}
+
+/**
+ * Football markets: the AMM read, plus each market's match. Three markets per
+ * match, so one extra call per market — the same multicall, not more requests.
+ */
+async function readSportsMarkets(): Promise<Market[]> {
+  const pools = await readAmmPools(sportsContract);
+  if (pools.length === 0) return [];
+  const matches = await publicClient.multicall({
+    contracts: pools.map((p) => ({
+      address: SPORTS_MARKET_ADDRESS,
+      abi: sportsViewsAbi,
+      functionName: "matchOf" as const,
+      args: [BigInt(p.id)] as const,
+    })),
+    allowFailure: false,
+  });
+  return pools.map(({ assetIndex: _a, strikePrice: _s, ...m }, i) => {
+    const [info, outcome] = matches[i] as unknown as [
+      { matchId: bigint; kickoff: bigint; competition: string; home: string; away: string; result: number },
+      number,
+    ];
+    const o = (outcome === 2 ? 2 : outcome === 3 ? 3 : 1) as 1 | 2 | 3;
+    return {
+      ...m,
+      key: marketKey("sports", m.id),
+      contract: SPORTS_MARKET_ADDRESS,
+      categoryId: "sports" as const,
+      question: sportsQuestion(info.home, info.away, o),
+      match: {
+        matchId: Number(info.matchId),
+        home: info.home,
+        away: info.away,
+        competition: info.competition,
+        kickoff: Number(info.kickoff),
+        outcome: o,
+        result: Number(info.result),
+      },
+    } satisfies SportsMarket;
+  });
+}
+
+
 
 /**
  * Every market across every deployed market contract, plus whichever
@@ -567,6 +638,7 @@ export async function readMarkets(): Promise<{
     { categoryId: "stocks", run: () => readFeedMarkets(STOCK_MARKET_ADDRESS, "stocks") },
     { categoryId: "reserves", run: () => readFeedMarkets(RESERVE_MARKET_ADDRESS, "reserves") },
     { categoryId: "amm", run: readAmmMarkets },
+    { categoryId: "sports", run: readSportsMarkets },
   ];
 
   const settled = await Promise.all(
@@ -641,8 +713,8 @@ export async function readWalletStakes(
     },
   ] as const;
 
-  const parimutuel = markets.filter((m) => m.categoryId !== "amm");
-  const amm = markets.filter((m) => m.categoryId === "amm");
+  const parimutuel = markets.filter((m) => !isAmm(m));
+  const amm = markets.filter(isAmm);
 
   const [pRes, aRes] = await Promise.all([
     parimutuel.length === 0
@@ -709,7 +781,7 @@ export async function readWalletLp(
     string,
     { shares: bigint; totalShares: bigint; withdrawn: boolean; claimable: bigint }
   >();
-  const amm = markets.filter((m) => m.categoryId === "amm");
+  const amm = markets.filter(isAmm);
   if (amm.length === 0) return out;
 
   const res = await publicClient.multicall({
@@ -803,7 +875,7 @@ export async function readTradeEvents(): Promise<TradeEvent[]> {
   });
 
   const bought = parseEventLogs({ abi: [BOUGHT_EVENT], logs: receiver }).map((l) => ({
-    marketKey: marketKey("amm", Number(l.args.marketId)),
+    marketKey: marketKey(categoryOf(l.address) ?? "amm", Number(l.args.marketId)),
     user: l.args.buyer,
     isYes: l.args.isYes,
     amount: l.args.collateralIn,
@@ -813,7 +885,7 @@ export async function readTradeEvents(): Promise<TradeEvent[]> {
   }));
 
   const sold = parseEventLogs({ abi: [SOLD_EVENT], logs: receiver }).map((l) => ({
-    marketKey: marketKey("amm", Number(l.args.marketId)),
+    marketKey: marketKey(categoryOf(l.address) ?? "amm", Number(l.args.marketId)),
     user: l.args.seller,
     isYes: l.args.isYes,
     // Collateral RECEIVED, not spent — see TradeEvent.
@@ -843,7 +915,7 @@ export async function readLpEvents(): Promise<LpEvent[]> {
   const { receiver } = await syncLogs();
 
   const added = parseEventLogs({ abi: [LIQUIDITY_ADDED_EVENT], logs: receiver }).map((l) => ({
-    marketKey: marketKey("amm", Number(l.args.marketId)),
+    marketKey: marketKey(categoryOf(l.address) ?? "amm", Number(l.args.marketId)),
     provider: l.args.provider,
     direction: "add" as const,
     amount: l.args.collateralIn,
@@ -859,7 +931,7 @@ export async function readLpEvents(): Promise<LpEvent[]> {
     abi: [LIQUIDITY_WITHDRAWN_EVENT],
     logs: receiver,
   }).map((l) => ({
-    marketKey: marketKey("amm", Number(l.args.marketId)),
+    marketKey: marketKey(categoryOf(l.address) ?? "amm", Number(l.args.marketId)),
     provider: l.args.provider,
     direction: "withdraw" as const,
     amount: l.args.amount,
@@ -1126,7 +1198,7 @@ export async function quoteAmmShares(
   isYes: boolean,
   collateralIn: bigint,
 ): Promise<{ shares: bigint; fee: bigint }> {
-  if (market.categoryId !== "amm" || collateralIn <= 0n) return { shares: 0n, fee: 0n };
+  if (!isAmm(market) || collateralIn <= 0n) return { shares: 0n, fee: 0n };
   const [shares, fee] = (await publicClient.readContract({
     address: market.contract,
     abi: ammWriteAbi,
@@ -1147,7 +1219,7 @@ export async function quoteAmmAddLiquidity(
   market: Market,
   amount: bigint,
 ): Promise<{ lpShares: bigint; yesResidual: bigint; noResidual: bigint }> {
-  if (market.categoryId !== "amm" || amount <= 0n) {
+  if (!isAmm(market) || amount <= 0n) {
     return { lpShares: 0n, yesResidual: 0n, noResidual: 0n };
   }
   const [lpShares, yesResidual, noResidual] = (await publicClient.readContract({
@@ -1226,7 +1298,7 @@ export async function quoteAmmSell(
   isYes: boolean,
   sharesIn: bigint,
 ): Promise<{ collateral: bigint; fee: bigint }> {
-  if (market.categoryId !== "amm" || sharesIn <= 0n) return { collateral: 0n, fee: 0n };
+  if (!isAmm(market) || sharesIn <= 0n) return { collateral: 0n, fee: 0n };
   const [collateral, fee] = (await publicClient.readContract({
     address: market.contract,
     abi: ammWriteAbi,

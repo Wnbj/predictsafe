@@ -99,6 +99,15 @@ caps `eth_getLogs` at 200 blocks); Sepolia still goes through the paced queue.
 `writeWithApproval` and `waitForTx` take a token and a `TxNetwork`, so the same
 one-prompt approval works for a bridge from either side.
 
+## Football
+
+`lib/sports.ts` and `readSportsMarkets` in `lib/chain.ts`. A football market is
+`SportsMarket` in `lib/types.ts`: an AMM market with a `match` and no asset or
+strike. **Anything about money asks `isAmm(m)`, never `categoryId === "amm"`** —
+the sports category is an AMM too. A match's three markets group into one
+event (`lib/events.ts`), shown like a strike ladder with the teams and "Draw"
+as rungs. The contract stores no question; the app writes it from the match.
+
 ## Images
 
 Category and asset cover photos are in `public/img/`, from Pexels — credits in

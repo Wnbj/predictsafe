@@ -9,6 +9,7 @@ import {
   totalPool,
 } from "../lib/pricing";
 import {
+  isAmm,
   isPriceMarket,
   MarketStatus,
   Outcome,
@@ -30,6 +31,7 @@ import { TradePanel } from "../components/TradePanel";
 import { LiquidityPanel } from "../components/LiquidityPanel";
 import { Stat } from "../components/Stat";
 import { Term } from "../components/Term";
+import { competitionName, matchTitle, outcomeLabel as sportsOutcomeLabel, resultLabel } from "../lib/sports";
 import type { WalletState } from "../hooks/useWallet";
 
 type Tab = "overview" | "activity" | "rules";
@@ -222,7 +224,10 @@ export function Detail({
         <div className="muted" style={{ fontSize: 13 }}>
           {market.status === MarketStatus.Settled ? (
             <>
-              {settlement && settlement.outcome !== Outcome.Void && (
+              {settlement && settlement.outcome !== Outcome.Void && market.categoryId === "sports" && (
+                <>{resultLabel(market)} · </>
+              )}
+              {settlement && settlement.outcome !== Outcome.Void && market.categoryId !== "sports" && (
                 <>
                   observed {formatMarketValue(market.categoryId, settlement.observedValue)} against{" "}
                   {market.categoryId === "flights"
@@ -243,7 +248,7 @@ export function Detail({
             <>
               {yes === null ? "first stake sets the price" : <Term k="implied">implied chance of Yes</Term>} ·{" "}
               {formatToken(totalPool(market))} staked ·{" "}
-              {market.categoryId === "amm" ? (
+              {isAmm(market) ? (
                 <Term k="amm">priced by an AMM</Term>
               ) : (
                 <Term k="pool">pooled</Term>
@@ -275,11 +280,14 @@ export function Detail({
 
           {ladder && (
             <div className="wallet">
-              <div className="eyebrow">All strikes at this expiry</div>
+              <div className="eyebrow">
+                {market.categoryId === "sports" ? "Every outcome of this match" : "All strikes at this expiry"}
+              </div>
               <StrikeLadder event={ladder} selectedKey={market.key} onOpen={onOpenMarket} />
               <p className="muted-strong" style={{ fontSize: 11, margin: "var(--space-2) 0 0" }}>
-                Same question, same moment, different strike. Each rung is its own market — pick
-                the one you actually have a view on.
+                {market.categoryId === "sports"
+                  ? "Home win, draw, away win: three markets, exactly one of which pays. Their prices are three separate pools, so they need not add to 100% — the gap is the room for a trade."
+                  : "Same question, same moment, different strike. Each rung is its own market — pick the one you actually have a view on."}
               </p>
             </div>
           )}
@@ -320,6 +328,11 @@ export function Detail({
                       }
                     />
                     <Stat label="Threshold" value={`${market.thresholdMinutes} min`} />
+                  </>
+                ) : market.categoryId === "sports" ? (
+                  <>
+                    <Stat label="Result" value={resultLabel(market) ?? "—"} />
+                    <Stat label="Match" value={matchTitle(market)} />
                   </>
                 ) : (
                   <>
@@ -374,6 +387,16 @@ export function Detail({
                     <strong>No</strong> if it lands less than {market.thresholdMinutes} minutes
                     late.
                   </>
+                ) : market.categoryId === "sports" ? (
+                  <>
+                    {competitionName(market.match.competition)}, kick-off {formatTimestamp(market.match.kickoff)}.
+                    Resolves <strong>Yes</strong> if{" "}
+                    {market.match.outcome === 2
+                      ? "the match is level"
+                      : `${sportsOutcomeLabel(market)} are ahead`}{" "}
+                    after ninety minutes plus stoppage time, and <strong>No</strong> otherwise. One of
+                    three markets on this match — home win, draw, away win.
+                  </>
                 ) : (
                   <>
                     Resolves <strong>Yes</strong> if {priceAssetLabel(market)} is at or above{" "}
@@ -385,13 +408,13 @@ export function Detail({
               <div className="detail-stats" style={{ marginTop: "var(--space-4)" }}>
                 <Stat label="Pool" value={formatToken(totalPool(market))} />
                 <Stat label="Backers" value={String(backers)} />
-                {market.categoryId === "amm" && (
+                {isAmm(market) && (
                   <Stat
                     label={providers === 1 ? "Liquidity provider" : "Liquidity providers"}
                     value={String(providers)}
                   />
                 )}
-                {market.categoryId !== "flights" && (
+                {isPriceMarket(market) && (
                   <Stat label="Strike" value={formatMarketValue(market.categoryId, market.strikePrice)} />
                 )}
                 <Stat label="Closes" value={formatTimestamp(market.closeTime)} />
@@ -467,6 +490,17 @@ export function Detail({
                       <strong>No</strong> — arrival delay &lt; {market.thresholdMinutes} minutes.
                     </li>
                   </>
+                ) : market.categoryId === "sports" ? (
+                  <>
+                    <li>
+                      <strong>Yes</strong> —{" "}
+                      {market.match.outcome === 2 ? "level" : `${sportsOutcomeLabel(market)} ahead`} after
+                      ninety minutes. Extra time and penalties do not count.
+                    </li>
+                    <li>
+                      <strong>No</strong> — any other score after ninety minutes.
+                    </li>
+                  </>
                 ) : (
                   <>
                     <li>
@@ -483,6 +517,15 @@ export function Detail({
                   one side of the book is backed. Everyone is refunded their own stake.
                 </li>
               </ul>
+              {market.categoryId === "sports" ? (
+                <p>
+                  No one has to ask for this one. Every hour a Chainlink CRE workflow reads the
+                  match from football-data.org — every node of the network on its own — agrees on
+                  the score after ninety minutes, and writes one signed report that settles all three
+                  markets on the match. A winning share pays 1 mUSDC; a postponed or cancelled
+                  match voids, and every share pays half.
+                </p>
+              ) : (
               <p>
                 Anyone may call <code>requestSettlement()</code> once the settle-after time passes.
                 That emits the log a Chainlink CRE workflow listens for; the network fetches the
@@ -490,6 +533,7 @@ export function Detail({
                 <code>onReport()</code>. Payouts are parimutuel: the winning side splits the entire
                 pot in proportion to stake.
               </p>
+              )}
               {market.categoryId === "crypto" && (
                 <p>
                   The settlement price is the close of the one-minute candle containing expiry,

@@ -72,7 +72,7 @@ describe("category registry", () => {
    */
   it("marks exactly the categories that have markets as live", () => {
     const live = LIVE_CATEGORIES.map((c) => c.id).sort();
-    expect(live).toEqual(["amm", "crypto", "flights", "reserves", "stocks"]);
+    expect(live).toEqual(["amm", "crypto", "flights", "reserves", "sports", "stocks"]);
   });
 
   it("has no duplicate ids", () => {

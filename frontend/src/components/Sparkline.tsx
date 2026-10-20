@@ -1,3 +1,4 @@
+import { isAmm } from "../lib/types";
 import { useMemo } from "react";
 import type { Market, TradeEvent } from "../lib/types";
 import { impliedYesPercent } from "../lib/pricing";
@@ -33,7 +34,7 @@ export function Sparkline({
     // so its history is a tape of real prices rather than a pool ratio
     // replayed. Using the parimutuel replay here would plot the sum of money
     // traded, which is not a probability at all.
-    if (market.categoryId === "amm") {
+    if (isAmm(market)) {
       for (const e of mine) {
         if (!e.amm || e.amm.shares === 0n) continue;
         /**

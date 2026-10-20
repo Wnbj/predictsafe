@@ -108,11 +108,25 @@ export function formatUsd(scaled: bigint): string {
  * state a figure the feed never published.
  */
 export function formatMarketValue(categoryId: string, scaled: bigint): string {
+  // A football market records the result as a code, not a measurement.
+  if (categoryId === "sports") return ["—", "home win", "draw", "away win", "void"][Number(scaled)] ?? "—";
   // A flight's "value" is its arrival delay in whole minutes, unscaled. Read as
   // an 8-decimal price it printed every observed delay on /live as "$0.00".
   if (categoryId === "flights") return `${scaled} min`;
-  const money = formatUsd(scaled);
-  return categoryId === "reserves" ? money.slice(1) : money;
+  if (categoryId === "reserves") return formatFine(scaled);
+  return formatUsd(scaled);
+}
+
+/**
+ * A reserve level or fund NAV, with as many places as it carries, up to four.
+ * A NAV strike sits a fraction of a cent above today's value — USTB grows
+ * about $0.0011 a day — and showing it to the cent would print the strike as
+ * a number the market is already past.
+ */
+function formatFine(scaled: bigint): string {
+  const whole = scaled / PRICE_DECIMALS;
+  const frac = (scaled % PRICE_DECIMALS).toString().padStart(8, "0").slice(0, 4).replace(/0+$/, "");
+  return `${whole.toLocaleString()}.${frac.padEnd(2, "0")}`;
 }
 
 /** The 8-decimal on-chain price as a plain number, for comparing against spot. */

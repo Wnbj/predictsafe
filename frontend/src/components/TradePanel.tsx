@@ -24,7 +24,7 @@ import {
   type ContractCall,
 } from "../lib/chain";
 import { canBatch, headroomLabel, writeWithApproval } from "../lib/approval";
-import type { Market, Position, Side } from "../lib/types";
+import { isAmm as isAmmMarket, type Market, type Position, type Side } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
 type Busy = null | "approving" | "staking" | "claiming" | "minting" | "settling";
@@ -89,7 +89,7 @@ export function TradePanel({
     }
   };
 
-  const isAmm = market.categoryId === "amm";
+  const isAmm = isAmmMarket(market);
   /**
    * Buying and selling are the same trade in opposite directions, so they share
    * the side toggle and the amount box rather than becoming two panels. What
@@ -346,7 +346,7 @@ export function TradePanel({
                   * to whoever provided the liquidity, and a trader is entitled to
                   * see the size of it before agreeing.
                   */}
-                {market.categoryId === "amm" && market.feeBps > 0 && (
+                {isAmmMarket(market) && market.feeBps > 0 && (
                   <div>
                     <dt>Pool fee ({(market.feeBps / 100).toFixed(2)}%)</dt>
                     <dd>{quotedFee === null ? "—" : formatToken(quotedFee, { symbol: true })}</dd>

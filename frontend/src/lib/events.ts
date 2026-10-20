@@ -35,6 +35,8 @@ export function isLadder(event: MarketEvent): boolean {
  * ladder is a lateral move, not opening new content.
  */
 export function eventKeyFor(m: Market): string | null {
+  // A football match's three markets — home, draw, away — are one event too.
+  if (m.categoryId === "sports") return `sports:${m.contract}:${m.match.matchId}`;
   if (!isPriceMarket(m)) return null;
   const asset = m.categoryId === "crypto" || m.categoryId === "amm" ? m.asset : m.symbol;
   return `${m.categoryId}:${m.contract}:${asset}:${m.expiryTime}`;
@@ -94,6 +96,8 @@ export function groupIntoEvents(markets: Market[]): MarketEvent[] {
   const events = new Map<string, MarketEvent>();
   for (const [key, rungs] of byKey) {
     const sorted = [...rungs].sort((a, b) => {
+      // A match reads home, draw, away — in the order the outcomes are numbered.
+      if (a.categoryId === "sports" && b.categoryId === "sports") return a.match.outcome - b.match.outcome;
       const sa = isPriceMarket(a) ? a.strikePrice : 0n;
       const sb = isPriceMarket(b) ? b.strikePrice : 0n;
       return sa === sb ? 0 : sa < sb ? -1 : 1;
@@ -102,7 +106,7 @@ export function groupIntoEvents(markets: Market[]): MarketEvent[] {
       key,
       rungs: sorted,
       featured: atTheMoney(sorted),
-      expiryTime: isPriceMarket(sorted[0]!) ? sorted[0]!.expiryTime : sorted[0]!.closeTime,
+      expiryTime: isPriceMarket(sorted[0]!) || sorted[0]!.categoryId === "sports" ? sorted[0]!.expiryTime : sorted[0]!.closeTime,
     });
   }
 

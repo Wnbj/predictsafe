@@ -4,6 +4,7 @@ import {
   type LpPosition,
   type Market,
   type TradeEvent,
+  isAmm,
 } from "./types";
 
 /**
@@ -32,7 +33,7 @@ import {
  * It is a mark, not a claim. Nothing is owed until settlement.
  */
 export function markPoolValue(m: Market, shares: bigint, totalShares: bigint): bigint {
-  if (m.categoryId !== "amm" || totalShares === 0n || shares === 0n) return 0n;
+  if (!isAmm(m) || totalShares === 0n || shares === 0n) return 0n;
 
   const y = m.yesReserve;
   const n = m.noReserve;
@@ -155,7 +156,7 @@ export function buildLpPosition(
  * and the honest one is the same price the book is quoting.
  */
 export function markShares(m: Market, yes: bigint, no: bigint): bigint {
-  if (m.categoryId !== "amm") return 0n;
+  if (!isAmm(m)) return 0n;
   const p = BigInt(m.yesPriceBps);
   return (yes * p + no * (10_000n - p)) / 10_000n;
 }

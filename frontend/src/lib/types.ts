@@ -135,12 +135,53 @@ export interface AmmMarket extends MarketBase {
   observedPrice: bigint;
 }
 
+/** The football match a sports market belongs to, read from SportsMarket.matchOf. */
+export interface SportsMatch {
+  /** football-data.org's id. */
+  matchId: number;
+  home: string;
+  away: string;
+  /** PL, CL … */
+  competition: string;
+  kickoff: number;
+  /** Which question this market asks: 1 home win, 2 draw, 3 away win. */
+  outcome: 1 | 2 | 3;
+  /** 0 until settled, then 1 home, 2 draw, 3 away, 4 void. */
+  result: number;
+}
+
+/**
+ * A football market: an AMM market in every respect that touches money —
+ * shares, reserves, price, liquidity — on the SportsMarket contract, whose
+ * three markets per match the DON opens and settles. It has no asset and no
+ * strike: AmmMarket's `asset` and `strikePrice` slots carry placeholders there
+ * (the strike is the match id), so they are left OUT of this type rather than
+ * offered to code that would read them as a price.
+ */
+export interface SportsMarket extends Omit<AmmMarket, "categoryId" | "asset" | "strikePrice"> {
+  categoryId: "sports";
+  match: SportsMatch;
+}
+
 export type Market =
   | FlightMarket
   | CryptoMarket
   | StockMarket
   | ReserveMarket
-  | AmmMarket;
+  | AmmMarket
+  | SportsMarket;
+
+/**
+ * Priced by an automated market maker: shares, reserves, a quoted price.
+ * Everything that buys, sells, redeems, values a position or reads the odds
+ * asks THIS, not `categoryId === "amm"` — the sports category is an AMM too,
+ * and each place that asked about the category instead would have treated a
+ * football market as a parimutuel pool, the bug this project has had five
+ * times over.
+ */
+export function isAmm(m: Market): m is AmmMarket | SportsMarket {
+  return m.categoryId === "amm" || m.categoryId === "sports";
+}
 
 /** Markets whose terms are a price against a strike, whatever the asset. */
 export type PriceMarket = CryptoMarket | StockMarket | ReserveMarket | AmmMarket;

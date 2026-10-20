@@ -1,4 +1,5 @@
 import { formatMarketValue, formatPercent } from "../lib/format";
+import { outcomeLabel } from "../lib/sports";
 import { impliedYesPercent } from "../lib/pricing";
 import { isPriceMarket } from "../lib/types";
 import type { MarketEvent } from "../lib/events";
@@ -23,8 +24,9 @@ export function StrikeLadder({
   compact?: boolean;
 }) {
   // Highest strike first: the least likely outcome on top, the way an option
-  // chain is read.
-  const rungs = [...event.rungs].reverse();
+  // chain is read. A match keeps its own order — home, draw, away.
+  const sports = event.rungs[0]?.categoryId === "sports";
+  const rungs = sports ? event.rungs : [...event.rungs].reverse();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: compact ? 2 : 4 }}>
@@ -60,8 +62,12 @@ export function StrikeLadder({
             }}
           >
             <span style={{ whiteSpace: "nowrap" }}>
-              {isPriceMarket(m) ? formatMarketValue(m.categoryId, m.strikePrice) : m.question}
-              {!compact && " or above"}
+              {m.categoryId === "sports"
+                ? outcomeLabel(m)
+                : isPriceMarket(m)
+                  ? formatMarketValue(m.categoryId, m.strikePrice)
+                  : m.question}
+              {!compact && !sports && " or above"}
             </span>
 
             <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>

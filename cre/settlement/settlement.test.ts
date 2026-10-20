@@ -39,6 +39,18 @@ import {
   candidateFor,
   specFor,
   scheduledSlotKey,
+  onSportsCycle,
+  onScheduleCycle,
+  footballDigest,
+  footballResult,
+  footballToOpen,
+  encodeSportsReport,
+  sportsGasLimit,
+  SPORTS_HOME,
+  SPORTS_DRAW,
+  SPORTS_AWAY,
+  SPORTS_VOID,
+  type FootballMatch,
 } from "./main"
 
 /**
@@ -841,6 +853,28 @@ describe("scheduled markets", () => {
     )
   })
 
+  test("a NAV strike sits at the expected accrual, to a tenth of a cent", () => {
+    // USTB on Mon 2026-10-26 22:00 UTC: the weekly slot is Friday 20:00, staking to Thursday 20:00.
+    const MON = Date.UTC(2026, 9, 26, 22, 0, 0) / 1000
+    const ustb = {
+      kind: "reserve" as const,
+      symbol: "USTB",
+      label: "USTB NAV per share",
+      horizonSeconds: 604800,
+      offsetSeconds: 158400,
+      closeBeforeSeconds: 86400,
+      strikeStep: 0.001,
+      strikeOffset: 0.0045,
+    }
+    const c = candidateFor(ustb, MON)!
+    expect(c.expiryTime).toBe(Date.UTC(2026, 9, 30, 20, 0, 0) / 1000)
+    expect(c.closeTime).toBe(Date.UTC(2026, 9, 29, 20, 0, 0) / 1000)
+    // 11.251041 + 0.0045 = 11.255541 -> 11.256
+    expect(specFor(c, 1_125_104_100n).question).toBe(
+      "Will USTB NAV per share be at or above $11.256 at 20:00 UTC on Oct 30?",
+    )
+  })
+
   test("terms are encoded the way MarketScheduler.openOne decodes each kind", () => {
     const flight = specFor(candidateFor({ kind: "flight", flight: "AA100", thresholdMinutes: 30 }, TUE)!, 0n)
     expect(flight.kind).toBe(3)
@@ -917,5 +951,174 @@ describe("scheduled markets", () => {
     expect(
       fns({ schedulerContractAddress: "0x0000000000000000000000000000000000000000", schedulerSchedule: "0 1 * * * *" }),
     ).not.toContain(onScheduleMarkets)
+  })
+})
+
+/**
+ * Football. One request per run is reduced to a digest every node agrees on;
+ * from it and DON time come the results to report and the next match to open.
+ * The rules worth pinning: the answer is the score after NINETY minutes, a
+ * postponement voids, a result is never reported before the match could have
+ * ended, and opening is bounded and soonest-first.
+ */
+describe("football", () => {
+  const KICKOFF = Date.UTC(2026, 9, 24, 14, 0, 0) / 1000
+  const match = (over: Partial<FootballMatch> = {}): FootballMatch => ({
+    id: 537000,
+    kickoff: KICKOFF,
+    status: "FINISHED",
+    competition: "PL",
+    home: "Arsenal",
+    away: "Chelsea",
+    homeGoals: 2,
+    awayGoals: 1,
+    ...over,
+  })
+  const apiMatch = (id: number, over: Record<string, unknown> = {}) => ({
+    id,
+    utcDate: "2026-10-24T14:00:00Z",
+    status: "FINISHED",
+    lastUpdated: `2026-10-24T16:0${id % 10}:00Z`,
+    competition: { code: "CL", name: "UEFA Champions League" },
+    homeTeam: { shortName: "Real Madrid", name: "Real Madrid CF" },
+    awayTeam: { shortName: "Bayern", name: "FC Bayern München" },
+    score: { winner: "AWAY_TEAM", duration: "REGULAR", fullTime: { home: 1, away: 2 }, halfTime: { home: 0, away: 1 } },
+    ...over,
+  })
+
+  test("the digest keeps what decides a market, sorted, and drops what nodes disagree on", () => {
+    const a = footballDigest({ matches: [apiMatch(2), apiMatch(1)] })
+    const b = footballDigest({ matches: [apiMatch(1, { lastUpdated: "later" }), apiMatch(2)] })
+    expect(a).toBe(b)
+    const [first] = JSON.parse(a) as FootballMatch[]
+    expect(first).toEqual({
+      id: 1,
+      kickoff: KICKOFF,
+      status: "FINISHED",
+      competition: "CL",
+      home: "Real Madrid",
+      away: "Bayern",
+      homeGoals: 1,
+      awayGoals: 2,
+    })
+  })
+
+  test("a status the API answers as a timestamp reads as scheduled", () => {
+    // Measured 2026-10-20 with competitions=PL,CL on the free plan.
+    const [m] = JSON.parse(
+      footballDigest({ matches: [apiMatch(4, { status: "2026-10-21 15:45:00Z", score: { fullTime: { home: null, away: null } } })] }),
+    ) as FootballMatch[]
+    expect(m!.status).toBe("SCHEDULED")
+  })
+
+  test("after extra time, the score that counts is the one at ninety minutes", () => {
+    const [m] = JSON.parse(
+      footballDigest({
+        matches: [
+          apiMatch(3, {
+            score: { winner: "HOME_TEAM", duration: "EXTRA_TIME", fullTime: { home: 2, away: 1 }, regularTime: { home: 1, away: 1 } },
+          }),
+        ],
+      }),
+    ) as FootballMatch[]
+    expect(footballResult(m, KICKOFF, KICKOFF + 3 * 3600)).toBe(SPORTS_DRAW)
+  })
+
+  test("a finished match resolves home, draw or away", () => {
+    const later = KICKOFF + 3 * 3600
+    expect(footballResult(match({ homeGoals: 2, awayGoals: 1 }), KICKOFF, later)).toBe(SPORTS_HOME)
+    expect(footballResult(match({ homeGoals: 1, awayGoals: 1 }), KICKOFF, later)).toBe(SPORTS_DRAW)
+    expect(footballResult(match({ homeGoals: 0, awayGoals: 3 }), KICKOFF, later)).toBe(SPORTS_AWAY)
+  })
+
+  test("nothing is reported before the match could have ended, except a postponement", () => {
+    expect(footballResult(match(), KICKOFF, KICKOFF + 3600)).toBeNull()
+    expect(footballResult(match({ status: "POSTPONED", homeGoals: null, awayGoals: null }), KICKOFF, KICKOFF - 86400)).toBe(
+      SPORTS_VOID,
+    )
+  })
+
+  test("in play or missing waits; days later it voids rather than holding money for ever", () => {
+    const soon = KICKOFF + 3 * 3600
+    const days = KICKOFF + 4 * 86400
+    expect(footballResult(match({ status: "IN_PLAY", homeGoals: null, awayGoals: null }), KICKOFF, soon)).toBeNull()
+    expect(footballResult(undefined, KICKOFF, soon)).toBeNull()
+    expect(footballResult(undefined, KICKOFF, days)).toBe(SPORTS_VOID)
+    expect(footballResult(match({ status: "SUSPENDED" }), KICKOFF, soon)).toBe(SPORTS_VOID)
+  })
+
+  test("opens scheduled matches in the chosen competitions, far enough out, soonest first", () => {
+    const now = KICKOFF - 86400
+    const list = [
+      match({ id: 1, status: "TIMED", kickoff: now + 2 * 86400 }),
+      match({ id: 2, status: "TIMED", kickoff: now + 6 * 3600 }),
+      match({ id: 3, status: "TIMED", kickoff: now + 3600 }), // too close
+      match({ id: 4, status: "TIMED", kickoff: now + 5 * 86400 }), // too far
+      match({ id: 5, status: "TIMED", competition: "BSA", kickoff: now + 6 * 3600 }), // not chosen
+      match({ id: 6, status: "FINISHED", kickoff: now + 6 * 3600 }),
+      match({ id: 7, status: "TIMED", kickoff: now + 8 * 3600 }), // already open
+    ]
+    expect(footballToOpen(list, ["PL", "CL"], new Set([7]), now, 5).map((m) => m.id)).toEqual([2, 1])
+    expect(footballToOpen(list, ["PL", "CL"], new Set([7]), now, 1).map((m) => m.id)).toEqual([2])
+    expect(footballToOpen(list, ["PL", "CL"], new Set(), now, 0)).toEqual([])
+  })
+
+  test("encodes the report as SportsMarket decodes it", () => {
+    const opens = [
+      {
+        matchId: 537000n,
+        kickoff: BigInt(KICKOFF),
+        competition: "PL",
+        home: "Arsenal",
+        away: "Chelsea",
+        liquidity: 10_000_000n,
+        openingBps: [4500, 2700, 2800] as [number, number, number],
+        feeBps: 30,
+      },
+    ]
+    const results = [{ matchId: 1n, result: SPORTS_AWAY, evidenceHash: `0x${"ab".repeat(32)}` as `0x${string}` }]
+    const [o, r] = decodeAbiParameters(
+      parseAbiParameters([
+        "(uint64 matchId, uint64 kickoff, string competition, string home, string away, uint256 liquidity, uint16[3] openingBps, uint16 feeBps)[]",
+        "(uint64 matchId, uint8 result, bytes32 evidenceHash)[]",
+      ]),
+      encodeSportsReport(opens, results),
+    )
+    expect(o).toEqual(opens)
+    expect(r).toEqual(results)
+  })
+
+  test("asks for Sepolia's gas: a match is three markets", () => {
+    expect(Number(sportsGasLimit(1, 0))).toBeGreaterThanOrEqual(3_300_000)
+    expect(Number(sportsGasLimit(0, 2))).toBeLessThan(Number(sportsGasLimit(1, 0)))
+  })
+
+  test("rides on the scheduler's trigger: a workflow may have at most ten", () => {
+    const base = {
+      flightContractAddress: "0x0900000000000000000000000000000000000001",
+      chainSelectorName: "ethereum-testnet-sepolia",
+      apiUrl: "https://example.invalid",
+      apiKey: "unused",
+      gasLimit: "1000000",
+      cryptoContractAddress: "0x0900000000000000000000000000000000000002",
+      stockContractAddress: "0x0900000000000000000000000000000000000003",
+      reserveContractAddress: "0x0900000000000000000000000000000000000004",
+      sweepSchedule: "0 0,30 * * * *",
+      exchangeContractAddress: "0x0900000000000000000000000000000000000006",
+      exchangeSchedule: "0 5,15,25,35,45,55 * * * *",
+      keeperContractAddress: "0x0900000000000000000000000000000000000007",
+      keeperSchedule: "0 2,12,22,32,42,52 * * * *",
+      schedulerContractAddress: "0x0900000000000000000000000000000000000008",
+      schedulerSchedule: "0 1,31 * * * *",
+    }
+    const fns = (extra: Record<string, string>) => initWorkflow({ ...base, ...extra } as Config).map((h) => h.fn)
+    const withSports = fns({ sportsContractAddress: "0x0900000000000000000000000000000000000009", sportsSchedule: "0 15 * * * *" })
+    expect(withSports).toHaveLength(10)
+    expect(withSports.at(-1)).toBe(onScheduleCycle)
+    expect(fns({}).at(-1)).toBe(onScheduleMarkets)
+    // Without the scheduler, football has a trigger of its own.
+    const { schedulerContractAddress: _s, ...noScheduler } = base
+    const alone = initWorkflow({ ...noScheduler, sportsContractAddress: "0x0900000000000000000000000000000000000009", sportsSchedule: "0 15 * * * *" } as Config).map((h) => h.fn)
+    expect(alone.at(-1)).toBe(onSportsCycle)
   })
 })

@@ -173,5 +173,7 @@ describe("formatMarketValue", () => {
   it("keeps dollars for prices and drops them for reserve levels", () => {
     expect(formatMarketValue("crypto", 6_306_236_000_000n)).toBe("$63,062.36");
     expect(formatMarketValue("reserves", 900_000_000_000_000n)).toBe("9,000,000.00");
+    // A NAV strike a fraction of a cent above today's value keeps its digits.
+    expect(formatMarketValue("reserves", 1_125_600_000n)).toBe("11.256");
   });
 });

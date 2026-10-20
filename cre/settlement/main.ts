@@ -146,6 +146,23 @@ export type Config = {
    * USTB, …). A bare address means 8 decimals.
    */
   priceFeeds?: Record<string, string | { address: string; decimals: number }>
+  /** SportsMarket address. Empty, or the zero address, leaves sports off. */
+  sportsContractAddress?: string
+  /** Cron schedule for the sports cycle — settle what finished, open what is next. */
+  sportsSchedule?: string
+  /** football-data.org v4, e.g. https://api.football-data.org/v4 */
+  footballApiUrl?: string
+  /** Vault secret id holding the football-data.org key. */
+  footballApiKeySecretId?: string
+  /** Competition codes to open matches from: PL, CL, PD … */
+  sportsCompetitions?: string[]
+  /** At most this many matches open (unsettled) at once. */
+  sportsMaxOpenMatches?: number
+  /** Liquidity per market, whole mUSDC. */
+  sportsLiquidity?: number
+  /** Opening chance of home, draw, away, in basis points. */
+  sportsOpeningBps?: [number, number, number]
+  sportsFeeBps?: number
   gasLimit: string
 }
 
@@ -176,6 +193,14 @@ export interface MarketScheduleRule {
   weekdaysOnly?: boolean
   /** Strikes round to this, in the feed's units. Defaults per asset. */
   strikeStep?: number
+  /**
+   * Added to the current value BEFORE rounding — the drift expected by
+   * expiry. A fund NAV only climbs, about $0.0011 a day for USTB (measured
+   * over 14 rounds to 2026-10-20), so a strike AT today's value is a market
+   * that is already decided; at today's value plus the expected accrual it is
+   * a real question about whether the yield holds.
+   */
+  strikeOffset?: number
   /** stock, reserve: how old the round at expiry may be. */
   maxStalenessSeconds?: number
   /** flight: flight number and delay threshold, for the flight `daysAhead`. */
@@ -648,11 +673,16 @@ export const retryDelayMs = (
  */
 const jitterSeed = (): number => Math.random() * 1_000_003 + (Date.now() % 100_000)
 
-const sendSpreadOverNodes = <T>(send: () => T, statusOf: (r: T) => number, label: string): T => {
+const sendSpreadOverNodes = <T>(
+  send: () => T,
+  statusOf: (r: T) => number,
+  label: string,
+  firstWindowMs: number = FIRST_WINDOW_MS,
+): T => {
   let waited = 0
   let last = 0
   for (let attempt = 0; attempt < FETCH_ATTEMPTS; attempt++) {
-    const delay = retryDelayMs(attempt, jitterSeed())
+    const delay = retryDelayMs(attempt, jitterSeed(), firstWindowMs)
     waited += delay
     sleep(delay)
 
@@ -2277,11 +2307,15 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /** "83300" -> "83,300", without Intl, which the workflow runtime may not have. */
 const thousands = (n: bigint): string => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
 
-/** An 8-decimal value as a person writes it: whole units, or cents when it has them. */
+/**
+ * An 8-decimal value as a person writes it: whole units; or cents; or, for a
+ * strike finer than a cent (a fund NAV), as many places as it needs, up to four.
+ */
 export const formatScheduledValue = (v: bigint): string => {
   const whole = v / 100_000_000n
-  const cents = (v % 100_000_000n) / 1_000_000n
-  return cents === 0n ? thousands(whole) : `${thousands(whole)}.${cents.toString().padStart(2, "0")}`
+  const frac = (v % 100_000_000n).toString().padStart(8, "0").slice(0, 4).replace(/0+$/, "")
+  if (frac === "") return thousands(whole)
+  return `${thousands(whole)}.${frac.padEnd(2, "0")}`
 }
 
 const whenUtc = (seconds: number): string => {
@@ -2363,7 +2397,8 @@ export const specFor = (c: ScheduleCandidate, price8: bigint): ScheduledSpec => 
     }
   }
   if (c.kind === "stock" || c.kind === "reserve") {
-    const strike = roundStrike(price8, r.strikeStep ?? 1)
+    const offset8 = BigInt(Math.round((r.strikeOffset ?? 0) * 100_000_000))
+    const strike = roundStrike(price8 + offset8, r.strikeStep ?? 1)
     const unit = r.unit ?? "$"
     return {
       ...base,
@@ -2490,6 +2525,320 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
   const txHash = bytesToHex(txResult.txHash ?? new Uint8Array(32))
   runtime.log(`Opened ${specs.length} market(s) in tx ${txHash}`)
   return txHash
+}
+
+// --- football: three AMM markets per match -------------------------------------
+
+/**
+ * One handler, once an hour, for everything football. It reads which matches
+ * SportsMarket is still waiting on (one chain read), asks football-data.org
+ * for the competitions' matches around today (ONE request per node), and
+ * reports either results for the ones that have finished or the next match to
+ * open — three markets: home win, draw, away win.
+ *
+ * One request per run, not one per match, because the free plan allows ten a
+ * minute and every request here is made by all ten nodes. The nodes' calls
+ * are spread over twenty seconds for the same reason the flight calls are.
+ *
+ * Consensus is on a DIGEST of the response — each match reduced to id, kickoff,
+ * status, teams and the score after ninety minutes, sorted — not on the raw
+ * body, whose `lastUpdated` stamps differ between nodes that asked a second
+ * apart. Everything after the digest is computed from it and DON time, so
+ * every node reports the same thing.
+ */
+const sportsAbi = [
+  {
+    type: "function",
+    name: "unsettled",
+    stateMutability: "view",
+    inputs: [{ name: "max", type: "uint256" }],
+    outputs: [
+      { name: "ids", type: "uint64[]" },
+      { name: "kickoffs", type: "uint64[]" },
+    ],
+  },
+] as const
+
+export const SPORTS_HOME = 1
+export const SPORTS_DRAW = 2
+export const SPORTS_AWAY = 3
+export const SPORTS_VOID = 4
+
+/** SportsMarket accepts a result this long after kickoff. */
+const SPORTS_SETTLE_AFTER_SECONDS = 2 * 3600
+/** Open a match at least this long before kickoff (the contract's floor is 30 min). */
+const SPORTS_MIN_LEAD_SECONDS = 2 * 3600
+/** Open matches kicking off within this horizon. */
+const SPORTS_MAX_LEAD_SECONDS = 3 * 86400
+/** A match missing from the feed this long after kickoff is voided rather than waited on. */
+const SPORTS_GIVE_UP_SECONDS = 3 * 86400
+/** Results per report; each settles three markets. */
+export const SPORTS_RESULTS_PER_REPORT = 2
+
+/**
+ * Gas, from Sepolia's pricing rather than forge's. Opening a match is ~942k
+ * locally — three markets, the mint, the match record — and the first real
+ * one, at 18:01 UTC on 2026-10-20, spent 4,269,890 of a 4.4M limit and was
+ * refused: out of gas inside the receiver, ~4.5x the local figure, more than
+ * the 3.5x a crypto `newMarket` showed. 7M leaves room. A result rewrites three
+ * markets' outcome, value and evidence.
+ */
+export const sportsGasLimit = (opens: number, results: number): string =>
+  String(400_000 + opens * 7_000_000 + results * 1_500_000)
+
+/** One match, as every node agrees on it. Goals are after ninety minutes, null until played. */
+export interface FootballMatch {
+  id: number
+  kickoff: number
+  status: string
+  competition: string
+  home: string
+  away: string
+  homeGoals: number | null
+  awayGoals: number | null
+}
+
+const footballMatchSchema = z.object({
+  id: z.number(),
+  utcDate: z.string(),
+  status: z.string(),
+  competition: z.object({ code: z.string() }),
+  homeTeam: z.object({ shortName: z.string().nullish(), name: z.string().nullish() }),
+  awayTeam: z.object({ shortName: z.string().nullish(), name: z.string().nullish() }),
+  score: z.object({
+    fullTime: z.object({ home: z.number().nullable(), away: z.number().nullable() }),
+    regularTime: z.object({ home: z.number().nullable(), away: z.number().nullable() }).nullish(),
+  }),
+})
+const footballResponseSchema = z.object({ matches: z.array(footballMatchSchema) })
+
+/** Statuses football-data.org documents. */
+const FOOTBALL_STATUSES = new Set([
+  "SCHEDULED", "TIMED", "IN_PLAY", "LIVE", "PAUSED", "FINISHED", "POSTPONED", "SUSPENDED", "CANCELLED", "AWARDED",
+])
+
+/**
+ * The response reduced to what decides a market, in a fixed order. When a
+ * match went to extra time the score after ninety minutes is `regularTime`;
+ * otherwise it is `fullTime`.
+ *
+ * A status outside the documented set is read as SCHEDULED. Measured
+ * 2026-10-20: asked with `competitions=PL,CL`, the free plan answers a
+ * not-yet-started match's status with a TIMESTAMP — "2026-10-21 15:45:00Z" —
+ * where the same match without the filter said "TIMED". Only an explicit
+ * FINISHED ever produces a result, so the worst an odd status can do is make
+ * a match openable or keep it waiting.
+ */
+export const footballDigest = (body: unknown): string => {
+  const parsed = footballResponseSchema.parse(body)
+  const rows: FootballMatch[] = parsed.matches.map((m) => {
+    const ninety = m.score.regularTime ?? m.score.fullTime
+    return {
+      id: m.id,
+      kickoff: Math.floor(Date.parse(m.utcDate) / 1000),
+      status: FOOTBALL_STATUSES.has(m.status) ? m.status : "SCHEDULED",
+      competition: m.competition.code,
+      home: (m.homeTeam.shortName ?? m.homeTeam.name ?? "").slice(0, 32),
+      away: (m.awayTeam.shortName ?? m.awayTeam.name ?? "").slice(0, 32),
+      homeGoals: ninety.home,
+      awayGoals: ninety.away,
+    }
+  })
+  rows.sort((a, b) => a.id - b.id)
+  return JSON.stringify(rows)
+}
+
+/**
+ * What to report for a match the contract is waiting on, or null to wait.
+ * Postponed, cancelled, suspended or awarded matches void; a finished one
+ * resolves on the score after ninety minutes; one the feed no longer lists,
+ * days after kickoff, voids rather than holding money for ever.
+ */
+export const footballResult = (
+  m: FootballMatch | undefined,
+  kickoff: number,
+  nowSeconds: number,
+): number | null => {
+  if (nowSeconds < kickoff + SPORTS_SETTLE_AFTER_SECONDS) {
+    return m && ["POSTPONED", "CANCELLED"].includes(m.status) ? SPORTS_VOID : null
+  }
+  if (!m) return nowSeconds > kickoff + SPORTS_GIVE_UP_SECONDS ? SPORTS_VOID : null
+  if (["POSTPONED", "CANCELLED", "SUSPENDED", "AWARDED"].includes(m.status)) return SPORTS_VOID
+  if (m.status !== "FINISHED" || m.homeGoals === null || m.awayGoals === null) {
+    return nowSeconds > kickoff + SPORTS_GIVE_UP_SECONDS ? SPORTS_VOID : null
+  }
+  return m.homeGoals > m.awayGoals ? SPORTS_HOME : m.homeGoals < m.awayGoals ? SPORTS_AWAY : SPORTS_DRAW
+}
+
+/** The next matches worth opening: scheduled, in the configured competitions, far enough out, soonest first. */
+export const footballToOpen = (
+  matches: readonly FootballMatch[],
+  competitions: readonly string[],
+  alreadyOpen: ReadonlySet<number>,
+  nowSeconds: number,
+  slots: number,
+): FootballMatch[] =>
+  matches
+    .filter(
+      (m) =>
+        (m.status === "TIMED" || m.status === "SCHEDULED") &&
+        competitions.includes(m.competition) &&
+        !alreadyOpen.has(m.id) &&
+        m.kickoff - nowSeconds >= SPORTS_MIN_LEAD_SECONDS &&
+        m.kickoff - nowSeconds <= SPORTS_MAX_LEAD_SECONDS &&
+        m.home !== "" &&
+        m.away !== "",
+    )
+    .sort((a, b) => a.kickoff - b.kickoff || a.id - b.id)
+    .slice(0, Math.max(0, slots))
+
+const isoDate = (seconds: number): string => new Date(seconds * 1000).toISOString().slice(0, 10)
+
+/** The report `SportsMarket._processReport` decodes: `abi.encode(MatchSpec[], MatchResult[])`. */
+export const encodeSportsReport = (
+  opens: readonly {
+    matchId: bigint
+    kickoff: bigint
+    competition: string
+    home: string
+    away: string
+    liquidity: bigint
+    openingBps: readonly [number, number, number]
+    feeBps: number
+  }[],
+  results: readonly { matchId: bigint; result: number; evidenceHash: `0x${string}` }[],
+): `0x${string}` =>
+  encodeAbiParameters(
+    parseAbiParameters([
+      "(uint64 matchId, uint64 kickoff, string competition, string home, string away, uint256 liquidity, uint16[3] openingBps, uint16 feeBps)[]",
+      "(uint64 matchId, uint8 result, bytes32 evidenceHash)[]",
+    ]),
+    [opens.map((o) => ({ ...o, openingBps: [...o.openingBps] as [number, number, number] })), [...results]],
+  )
+
+const fetchFootball = (sendRequester: HTTPSendRequester, url: string, apiKey: string): { digest: string } => {
+  const response = sendSpreadOverNodes(
+    () => sendRequester.sendRequest({ url, method: "GET", headers: { "X-Auth-Token": apiKey } }).result(),
+    (r) => r.statusCode,
+    "football-data",
+    20_000,
+  )
+  if (!ok(response)) throw new Error(`HTTP ${response.statusCode} from football-data`)
+  return { digest: footballDigest(json(response)) }
+}
+
+export const onSportsCycle = (runtime: Runtime<Config>): string => {
+  const address = runtime.config.sportsContractAddress ?? ""
+  if (address === "" || address === ZERO_ADDRESS) return "no sports contract configured"
+  const competitions = runtime.config.sportsCompetitions ?? ["PL", "CL"]
+  const nowSeconds = Math.floor(runtime.now().getTime() / 1000)
+
+  const evmClient = sweepEvm(runtime)
+  const reads = newReadBudget()
+  const atBlock = finalizedBlock(runtime, evmClient, reads)
+  const [ids, kickoffs] = decodeFunctionResult({
+    abi: sportsAbi,
+    functionName: "unsettled",
+    data: ethCall(
+      runtime,
+      evmClient,
+      address,
+      encodeFunctionData({ abi: sportsAbi, functionName: "unsettled", args: [20n] }),
+      atBlock,
+      reads,
+    ),
+  }) as readonly [readonly bigint[], readonly bigint[]]
+
+  const secretId = runtime.config.footballApiKeySecretId ?? "FOOTBALL_DATA_API_KEY"
+  const apiKey = runtime
+    .getSecret({ id: secretId, namespace: runtime.config.apiKeySecretNamespace ?? "main" })
+    .result().value
+  const apiUrl = runtime.config.footballApiUrl ?? "https://api.football-data.org/v4"
+  const url = `${apiUrl}/matches?competitions=${competitions.join(",")}&dateFrom=${isoDate(nowSeconds - 3 * 86400)}&dateTo=${isoDate(nowSeconds + 3 * 86400)}`
+
+  const { digest } = new HTTPClient()
+    .sendRequest(runtime, fetchFootball, ConsensusAggregationByFields<{ digest: string }>({ digest: identical }))(
+      url,
+      apiKey,
+    )
+    .result()
+  const matches = JSON.parse(digest) as FootballMatch[]
+  const byId = new Map(matches.map((m) => [m.id, m]))
+
+  // Results first: money waiting to be paid beats a new market.
+  const results = ids
+    .map((id, i) => {
+      const m = byId.get(Number(id))
+      const result = footballResult(m, Number(kickoffs[i]), nowSeconds)
+      if (result === null) return null
+      const evidence = m ? `${m.id}:${m.home} ${m.homeGoals ?? "-"}-${m.awayGoals ?? "-"} ${m.away}:${m.status}` : `${id}:missing`
+      return { matchId: id, result, evidenceHash: keccak256(toHex(evidence)), label: evidence }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .slice(0, SPORTS_RESULTS_PER_REPORT)
+
+  // Open only when nothing is being settled this run, one match at a time:
+  // a match is three markets and ~3.3M gas on Sepolia.
+  const openNow = new Set(ids.map((id) => Number(id)))
+  const slots = (runtime.config.sportsMaxOpenMatches ?? 3) - ids.length
+  const toOpen = results.length > 0 ? [] : footballToOpen(matches, competitions, openNow, nowSeconds, Math.min(1, slots))
+
+  if (results.length === 0 && toOpen.length === 0) {
+    runtime.log(`Sports at block ${atBlock}: ${ids.length} open, nothing to settle or open`)
+    return "nothing to do"
+  }
+
+  const liquidity = BigInt(runtime.config.sportsLiquidity ?? 10) * 1_000_000n
+  const openingBps = runtime.config.sportsOpeningBps ?? [4_500, 2_700, 2_800]
+  const opens = toOpen.map((m) => ({
+    matchId: BigInt(m.id),
+    kickoff: BigInt(m.kickoff),
+    competition: m.competition,
+    home: m.home,
+    away: m.away,
+    liquidity,
+    openingBps,
+    feeBps: runtime.config.sportsFeeBps ?? 30,
+  }))
+  for (const r of results) runtime.log(`Sports result: ${r.label} -> ${r.result}`)
+  for (const o of toOpen) runtime.log(`Sports opening: ${o.home} v ${o.away} (${o.competition}) at ${isoDate(o.kickoff)} ${new Date(o.kickoff * 1000).toISOString().slice(11, 16)} UTC`)
+
+  const signedReport = runtime
+    .report(prepareReportRequest(encodeSportsReport(opens, results.map(({ label: _, ...r }) => r))))
+    .result()
+  const txResult = evmClient
+    .writeReport(runtime, {
+      receiver: address,
+      report: signedReport,
+      gasConfig: { gasLimit: sportsGasLimit(opens.length, results.length) },
+    })
+    .result()
+  if (txResult.txStatus !== TxStatus.SUCCESS) {
+    throw new Error(`Sports write failed: ${txResult.errorMessage || txResult.txStatus}`)
+  }
+  const txHash = bytesToHex(txResult.txHash ?? new Uint8Array(32))
+  runtime.log(`Sports report in tx ${txHash}`)
+  return txHash
+}
+
+/**
+ * The scheduler's trigger, when football is on too: both jobs, each on its
+ * own, so a football-data outage cannot stop the other categories opening and
+ * a scheduler refusal cannot stop a match settling. Separate reports, separate
+ * read budgets.
+ */
+export const onScheduleCycle = (runtime: Runtime<Config>): string => {
+  const run = (name: string, job: (r: Runtime<Config>) => string): string => {
+    try {
+      return `${name}: ${job(runtime)}`
+    } catch (err) {
+      runtime.log(`${name} failed: ${err}`)
+      return `${name}: failed`
+    }
+  }
+  const results = [run("markets", onScheduleMarkets), run("sports", onSportsCycle)]
+  if (results.every((r) => r.endsWith("failed"))) throw new Error(results.join("; "))
+  return results.join("; ")
 }
 
 // --- reserve settlement, from a Chainlink PoR / NAV feed ---------------------
@@ -2780,12 +3129,23 @@ export const initWorkflow = (config: Config) => {
     )
   }
 
-  // The market opener, appended for the same reason.
+  // The market opener, appended for the same reason. Football rides on the
+  // same trigger rather than its own: a workflow may subscribe to at most TEN
+  // triggers ("PerWorkflow.TriggerSubscriptionLimit … cannot use 11, limit is
+  // 10", from the simulator, 2026-10-20), and this list is at ten with it.
   const scheduler = config.schedulerContractAddress ?? ""
-  if (scheduler !== "" && scheduler !== ZERO_ADDRESS && config.schedulerSchedule) {
+  const sports = config.sportsContractAddress ?? ""
+  const hasScheduler = scheduler !== "" && scheduler !== ZERO_ADDRESS && !!config.schedulerSchedule
+  const hasSports = sports !== "" && sports !== ZERO_ADDRESS
+  if (hasScheduler) {
     handlers.push(
-      handler(new CronCapability().trigger({ schedule: config.schedulerSchedule }), onScheduleMarkets),
+      handler(
+        new CronCapability().trigger({ schedule: config.schedulerSchedule! }),
+        hasSports ? onScheduleCycle : onScheduleMarkets,
+      ),
     )
+  } else if (hasSports && config.sportsSchedule) {
+    handlers.push(handler(new CronCapability().trigger({ schedule: config.sportsSchedule }), onSportsCycle))
   }
 
   return handlers

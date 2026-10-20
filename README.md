@@ -96,6 +96,7 @@ through **Chainlink CCIP** — see
 | sXAU / sCSPX on **Base Sepolia** | `0xc20BFD974F374669cAC5994D1E712F03BC102242` / `0x95f4f643654cf63171eD5a8d6751752Ba43793CA` |
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
 | MarketScheduler | `0x5A3da37c424b7957F6DE67937Bc447a7Fa104B6B` |
+| SportsMarket | `0xF30D56E3586091dFe63B74338a194d37Cef80906` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -293,6 +294,32 @@ become a sale — an unknown token, an asset no longer listed — is handed to t
 sender rather than reverted, because a reverted message leaves its tokens
 waiting for someone to execute it by hand.
 
+### Football: three AMM markets per match
+
+`SportsMarket` is an `AmmMarket` — the pool maths, buying, selling, redeeming
+and liquidity are inherited, not copied — that only the DON can open and
+settle. A match is three markets: the home side wins, a draw, the away side
+wins, each priced by its own pool and seeded with 10 mUSDC the contract mints
+for itself, opening at 45% / 27% / 28%.
+
+Every half hour the workflow reads which matches the contract is waiting on,
+asks football-data.org for the Premier League and Champions League fixtures
+around today in ONE request per node, and reports either the results of
+matches that have finished or the next match to open — never more than three
+open at once. The free plan allows ten requests a minute, and every request is
+made by all ten nodes, which is why it is one request per run and not one per
+match.
+
+**The answer is the score after ninety minutes.** A cup tie level at ninety is
+a draw here whoever goes through on extra time or penalties — only then do the
+three questions cover every outcome exactly once. A postponed or cancelled
+match voids all three markets, and a void pays half a unit per share, as every
+AMM market does.
+
+Consensus is on a digest of the response — each match reduced to its id,
+kickoff, status, teams and ninety-minute score, sorted — because the raw body
+carries `lastUpdated` stamps that differ between nodes asking a second apart.
+
 ### The board opens itself
 
 Every market used to be opened by a person, so most of the time the board
@@ -306,6 +333,7 @@ schedule, in every category:
 | Reserves | USTB NAV and USDW reserves, daily |
 | Flights | tomorrow's BA286 (45 min late?) and AA100 (30 min) |
 | AMM | a daily BTC market, seeded with 20 mUSDC of liquidity the scheduler mints |
+| Sports | a few Premier League and Champions League matches, three markets each — below |
 
 Twice an hour the workflow works out, for each rule, the slot that ends next;
 asks the contract in one read which of those are already open; takes strikes

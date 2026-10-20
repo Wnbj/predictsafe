@@ -10,7 +10,7 @@ import {
 } from "../lib/chain";
 import { useNow } from "../hooks/useNow";
 import { Wallet } from "../components/Wallet";
-import { MarketStatus, type Market, type Position } from "../lib/types";
+import { isAmm, MarketStatus, type Market, type Position } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
 type Filter = "all" | "open" | "resolved" | "claimable";
@@ -96,10 +96,10 @@ export function Portfolio({
       // one does not fail loudly, it simply reverts on a selector the contract
       // has never heard of.
       const hash =
-        market.categoryId === "amm"
+        isAmm(market)
           ? await sendAmmRedeem(wallet.account as Address, market)
           : await sendClaim(wallet.account as Address, market);
-      await waitForTx(hash, market.categoryId === "amm" ? "Redeem" : "Claim");
+      await waitForTx(hash, isAmm(market) ? "Redeem" : "Claim");
       await onRefresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -380,7 +380,7 @@ function PositionRow({
   // What `redeem`/`claim` alone would pay: the pool slice is a separate call
   // and must not gate this button.
   const shareClaim = p.shareClaimable;
-  const amm = p.market.categoryId === "amm";
+  const amm = isAmm(p.market);
   const side = p.lp
     ? p.yes > 0n || p.no > 0n
       ? `LP + ${p.yes > 0n ? "Yes" : "No"}`

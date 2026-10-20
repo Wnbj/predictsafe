@@ -728,7 +728,13 @@ contract address in `config.staging.json` populated:
 | 6 | cron sweep, stocks |
 | 7 | cron, exchange order filler (only with `exchangeContractAddress` and `exchangeSchedule` set) |
 | 8 | cron, automatic settlement requests (only with `keeperContractAddress` and `keeperSchedule` set) |
-| 9 | cron, scheduled market opener, all five kinds (only with `schedulerContractAddress` and `schedulerSchedule` set) |
+| 9 | cron, scheduled market opener, all five kinds — and the football cycle, when `sportsContractAddress` is set (only with `schedulerContractAddress` and `schedulerSchedule` set) |
+
+**Ten is the ceiling.** A workflow may subscribe to at most ten triggers — the
+simulator refused an eleventh with `PerWorkflow.TriggerSubscriptionLimit …
+cannot use 11, limit is 10` (2026-10-20). Football therefore runs inside
+trigger 9 (`onScheduleCycle`), each job in its own `try`, rather than taking a
+trigger of its own. Anything new has to share one too.
 
 **These numbers are positions in a list built at runtime, not fixed ids.**
 `initWorkflow` pushes a handler only when its contract address is non-empty
@@ -1322,6 +1328,60 @@ Roughly 45 markets a day. Most will see no stakes, settle as Void with an
 empty book, and drop behind the board's "test markets hidden" count. The
 keeper settles them all the same — that is the point: something is always
 open.
+
+## Football markets (SportsMarket)
+
+`SportsMarket` at `0xF30D56E3586091dFe63B74338a194d37Cef80906` inherits
+`AmmMarket` — `AmmMarket.newMarket` became a wrapper over an internal
+`_createMarket(…, provider)` so a subclass can fund markets itself; the
+deployed AmmMarket is untouched and its 71 tests pass unchanged. `newMarket`
+and `requestSettlement` revert here: only DON reports open and settle.
+
+**Report:** `abi.encode(MatchSpec[] opens, MatchResult[] results)`, at most six
+entries. A MatchSpec opens three markets (home, draw, away; questions are
+composed in the app, the contract stores none; the match id rides in
+`strikePrice`), closing at kickoff, settleable two hours after. A MatchResult —
+1 home, 2 draw, 3 away, 4 void — settles all three at once. Unknown matches,
+duplicates, results before kickoff + 2 h (except a void), and kickoffs less
+than 30 minutes or more than 7 days out are skipped with `MatchSkipped`.
+
+**Data:** football-data.org v4, free plan: 10 requests a minute, no odds
+("Activate Odds-Package"). The key is the Vault secret `FOOTBALL_DATA_API_KEY`
+(namespace `main`), from `CRE_SECRET_FOOTBALL_DATA_KEY` in `cre/.env`. Upload
+it once, from a real terminal (browser sign-in):
+
+```bash
+cd cre && cre secrets create secrets.football.yaml --secrets-auth browser --target production-settings
+```
+
+`secrets.football.yaml` holds only that name, because `create` refuses an id
+that already exists and the flight key does. The simulator reads the value
+from `cre/.env` itself, so `simulate` works before the upload.
+
+**Per run** (inside trigger 9, every 30 min): `unsettled(20)` on the contract
+(1 read), then ONE `GET /matches?competitions=PL,CL&dateFrom=…&dateTo=…`
+(today ± 3 days) per node, spread over 20 s. Results first — up to two
+finished matches per report — and only when there is nothing to settle, the
+next match to open, one per report, while fewer than `sportsMaxOpenMatches`
+(3) are unsettled. Gas 400k + 7M per match opened + 1.5M per result.
+
+**The first open was refused for gas.** 18:01 UTC on 2026-10-20: all ten nodes
+read the API (no 429), agreed on Como 1907 v Man United, and sent tx
+`0x017c87d5…` with a 4.4M limit; it spent 4,269,890 and the forwarder recorded
+`result = false`. ~942k gas locally became more than 4.27M on Sepolia — about
+4.5x, more than the 3.5x a single `newMarket` shows, because a match is mostly
+fresh storage. Raised to 7M per match (workflow `0057d6e8…`).
+
+**Measured quirks:**
+
+- With `competitions=PL,CL`, the free plan returns a not-yet-started match's
+  `status` as a TIMESTAMP ("2026-10-21 15:45:00Z"); the same match without the
+  filter said "TIMED". Anything outside the documented statuses reads as
+  SCHEDULED; only an explicit FINISHED produces a result.
+- `score.regularTime` appears only after extra time; otherwise `fullTime` is
+  the ninety-minute score.
+- A match the feed no longer lists three days after kickoff voids rather than
+  holding money for ever.
 
 ## Reserve markets (Proof of Reserve / fund NAV)
 

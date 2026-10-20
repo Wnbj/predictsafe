@@ -282,7 +282,29 @@ contract AmmMarket is ReceiverTemplate {
         uint256 liquidity,
         uint256 openingYesPriceBps,
         uint16 feeBps
-    ) external returns (uint256 marketId) {
+    ) external virtual returns (uint256 marketId) {
+        return _createMarket(
+            question, asset, strikePrice, closeTime, expiryTime, liquidity, openingYesPriceBps, feeBps, msg.sender
+        );
+    }
+
+    /**
+     * The whole of `newMarket`, with the provider named rather than taken from
+     * `msg.sender` — so a contract built on this one (SportsMarket) can open
+     * markets it funds itself. When the provider is this contract, the
+     * liquidity is already here and nothing is pulled.
+     */
+    function _createMarket(
+        string memory question,
+        Asset asset,
+        uint64 strikePrice,
+        uint64 closeTime,
+        uint64 expiryTime,
+        uint256 liquidity,
+        uint256 openingYesPriceBps,
+        uint16 feeBps,
+        address provider
+    ) internal returns (uint256 marketId) {
         if (strikePrice == 0) revert BadStrike();
         if (closeTime > expiryTime) revert BadExpiry();
         if (liquidity < MIN_LIQUIDITY) revert NoLiquidity();
@@ -291,7 +313,7 @@ contract AmmMarket is ReceiverTemplate {
         // the constant product would collapse and no trade could ever price.
         if (openingYesPriceBps < 100 || openingYesPriceBps > 9_900) revert BadOpeningPrice();
 
-        token.safeTransferFrom(msg.sender, address(this), liquidity);
+        if (provider != address(this)) token.safeTransferFrom(provider, address(this), liquidity);
 
         marketId = marketCount++;
         Market storage m = marketData[marketId];
@@ -302,7 +324,7 @@ contract AmmMarket is ReceiverTemplate {
         m.expiryTime = expiryTime;
         m.settleAfter = expiryTime + SETTLEMENT_DELAY;
         m.status = Status.Open;
-        m.creator = msg.sender;
+        m.creator = provider;
         m.feeBps = feeBps;
 
         // The scarcer side is the dearer one, so a high YES price means the
@@ -326,18 +348,18 @@ contract AmmMarket is ReceiverTemplate {
         // other half of expressing a view, and what puts their money at risk.
         uint256 yesResidual = liquidity - yesReserve;
         uint256 noResidual = liquidity - noReserve;
-        yesShares[marketId][msg.sender] = yesResidual;
-        noShares[marketId][msg.sender] = noResidual;
+        yesShares[marketId][provider] = yesResidual;
+        noShares[marketId][provider] = noResidual;
 
         // The seed is denominated 1:1 in LP shares, which fixes the scale for
         // every later deposit; `addLiquidity` mints against this.
         m.totalLpShares = liquidity;
-        lpShares[marketId][msg.sender] = liquidity;
+        lpShares[marketId][provider] = liquidity;
 
-        emit MarketCreated(marketId, uint8(asset), strikePrice, expiryTime, liquidity, msg.sender, feeBps);
+        emit MarketCreated(marketId, uint8(asset), strikePrice, expiryTime, liquidity, provider, feeBps);
         // Also as a deposit, so nothing downstream has to treat the seed as a
         // special case — it is simply the first one.
-        emit LiquidityAdded(marketId, msg.sender, liquidity, liquidity, liquidity, yesResidual, noResidual);
+        emit LiquidityAdded(marketId, provider, liquidity, liquidity, liquidity, yesResidual, noResidual);
     }
 
     /**
@@ -602,7 +624,7 @@ contract AmmMarket is ReceiverTemplate {
 
     // --- settlement --------------------------------------------------------
 
-    function requestSettlement(uint256 marketId) external {
+    function requestSettlement(uint256 marketId) external virtual {
         Market storage m = marketData[marketId];
         if (m.status != Status.Open) revert BadStatus();
         if (block.timestamp < m.settleAfter) revert TooEarly();
@@ -616,7 +638,7 @@ contract AmmMarket is ReceiverTemplate {
      * Same envelope as every other market in this project, so one workflow
      * handler serves them all.
      */
-    function _processReport(bytes calldata report) internal override {
+    function _processReport(bytes calldata report) internal virtual override {
         (uint256 marketId, uint8 rawOutcome, int256 observedValue, bytes32 evidenceHash) =
             abi.decode(report, (uint256, uint8, int256, bytes32));
 

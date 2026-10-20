@@ -31,6 +31,10 @@ export const AMM_MARKET_ADDRESS = (import.meta.env.VITE_AMM_MARKET_ADDRESS ??
  * tokens could not be registered with CCIP and which the app no longer reads.
  * Not a market contract — it settles nothing and is not scanned for logs.
  */
+/** Football: three AMM markets per match, opened and settled by the DON. */
+export const SPORTS_MARKET_ADDRESS = (import.meta.env.VITE_SPORTS_MARKET_ADDRESS ??
+  "0xF30D56E3586091dFe63B74338a194d37Cef80906") as `0x${string}`;
+
 export const EXCHANGE_ADDRESS = (import.meta.env.VITE_EXCHANGE_ADDRESS ??
   "0xaf764C8D21b2f057E5864125f9DB9c271ADfa340") as `0x${string}`;
 

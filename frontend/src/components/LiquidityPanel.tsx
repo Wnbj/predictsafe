@@ -11,7 +11,7 @@ import {
 } from "../lib/chain";
 import { writeWithApproval } from "../lib/approval";
 import { lpPnl, markShares } from "../lib/lp";
-import { MarketStatus, type Market, type Position } from "../lib/types";
+import { MarketStatus, type Market, type Position, isAmm } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
 type Busy = null | "approving" | "adding" | "withdrawing";
@@ -59,7 +59,7 @@ export function LiquidityPanel({
    * subtly wrong off-chain, and it is the part a depositor is least expecting.
    */
   useEffect(() => {
-    if (market.categoryId !== "amm" || !amount || amount <= 0n) {
+    if (!isAmm(market) || !amount || amount <= 0n) {
       setQuote(null);
       return;
     }
@@ -76,7 +76,7 @@ export function LiquidityPanel({
     };
   }, [market, amount]);
 
-  if (market.categoryId !== "amm") return null;
+  if (!isAmm(market)) return null;
 
   const open = market.status === MarketStatus.Open && now < market.closeTime;
   const resolved =

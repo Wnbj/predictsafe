@@ -22,6 +22,7 @@ import {
   type SettledEvent,
   type TradeEvent,
   type TraderStats,
+  isAmm,
 } from "../lib/types";
 
 export interface ChainData {
@@ -105,7 +106,7 @@ export function derivePositions(
     // Kept before the pool claim is added below — this is what `redeem()`
     // alone would pay, and the only honest label for the button that calls it.
     const shareEntitlement = entitlement;
-    let cost = m.categoryId === "amm" ? (netInByMarket.get(m.key) ?? 0n) : s.yes + s.no;
+    let cost = isAmm(m) ? (netInByMarket.get(m.key) ?? 0n) : s.yes + s.no;
 
     /**
      * Liquidity is money at risk in a second way, on top of any shares the
@@ -295,7 +296,7 @@ export function deriveTraders(
       // from the pool as it stands now read a withdrawn pool's zero reserve as
       // a total loss of the deposit — the deployer showed -119 mUSDC for
       // ladders it had been paid out of in full.
-      if (book.lpShares > 0n && m.categoryId === "amm") {
+      if (book.lpShares > 0n && isAmm(m)) {
         payout += book.lpWithdrawnAmount;
         const held = book.lpShares - book.lpWithdrawnShares;
         if (held > 0n && m.totalLpShares > 0n) {

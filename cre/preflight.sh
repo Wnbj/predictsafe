@@ -123,6 +123,7 @@ for key, label in (
     ('exchangeContractAddress', 'exchange'),
     ('keeperContractAddress',  'keeper '),
     ('schedulerContractAddress', 'scheduler'),
+    ('sportsContractAddress', 'sports '),
 ):
     v = c.get(key) or ''
     if v:

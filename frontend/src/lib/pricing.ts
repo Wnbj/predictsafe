@@ -1,4 +1,4 @@
-import { MarketStatus, Outcome, type Market, type Side } from "./types";
+import { MarketStatus, Outcome, type Market, type Side, isAmm } from "./types";
 
 /**
  * What a market is worth, across BOTH pricing models.
@@ -29,7 +29,7 @@ import { MarketStatus, Outcome, type Market, type Side } from "./types";
  * ratio to those numbers reports the odds exactly inverted.
  */
 export function impliedYesPercent(m: Market): number | null {
-  if (m.categoryId === "amm") return m.yesPriceBps / 100;
+  if (isAmm(m)) return m.yesPriceBps / 100;
   const total = m.yesPool + m.noPool;
   if (total === 0n) return null;
   return Number((m.yesPool * 10000n) / total) / 100;
@@ -43,7 +43,7 @@ export function impliedYesPercent(m: Market): number | null {
  * same money twice.
  */
 export function totalPool(m: Market): bigint {
-  if (m.categoryId === "amm") return m.collateral;
+  if (isAmm(m)) return m.collateral;
   return m.yesPool + m.noPool;
 }
 
@@ -76,7 +76,7 @@ export function isUnstakedAndResolved(m: Market): boolean {
 export function isOneSided(m: Market): boolean {
   // An AMM market has no such failure: every share is individually
   // collateralised, so it settles correctly even with no trades at all.
-  if (m.categoryId === "amm") return false;
+  if (isAmm(m)) return false;
   const total = m.yesPool + m.noPool;
   return total > 0n && (m.yesPool === 0n || m.noPool === 0n);
 }
@@ -121,7 +121,7 @@ export function estimatePayout(
    * simply false. The AMM quotes from the contract instead; there is nothing
    * to estimate here.
    */
-  if (m.categoryId === "amm") return null;
+  if (isAmm(m)) return null;
 
   const yesPool = side === "yes" ? m.yesPool + amount : m.yesPool;
   const noPool = side === "no" ? m.noPool + amount : m.noPool;
@@ -151,7 +151,7 @@ export function claimablePayout(
   // because each was collateralised individually when it was minted. A void
   // pays half a unit per share either side, which is the only division that
   // stays solvent when one unit of collateral backs one share of each side.
-  if (m.categoryId === "amm") {
+  if (isAmm(m)) {
     if (m.status === MarketStatus.Void) return (yesStake + noStake) / 2n;
     if (m.status !== MarketStatus.Settled) return 0n;
     if (m.outcome === Outcome.Yes) return yesStake;

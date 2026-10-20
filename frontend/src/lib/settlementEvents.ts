@@ -319,7 +319,7 @@ export async function readSettlementLogs(
     for (const l of only(raw, REDEEMED_EVENT)) {
       logs.push({
         kind: "payout",
-        marketKey: marketKey("amm", Number(l.args.marketId)),
+        marketKey: keyFor(l.address, l.args.marketId) ?? marketKey("amm", Number(l.args.marketId)),
         who: l.args.holder,
         amount: l.args.amount,
         via: "redeem",

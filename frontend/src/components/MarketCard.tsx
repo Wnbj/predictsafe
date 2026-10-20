@@ -1,5 +1,6 @@
 import { category, CoverIcon, coverBackground } from "../lib/categories";
-import { formatMarketValue, formatPercent, formatToken, statusLabel } from "../lib/format";
+import { formatMarketValue, formatPercent, formatTimestamp, formatToken, statusLabel } from "../lib/format";
+import { competitionName, matchTitle } from "../lib/sports";
 import { impliedYesPercent, isOneSided, totalPool } from "../lib/pricing";
 import {
   isPriceMarket,
@@ -39,7 +40,12 @@ export function MarketCard({
    * is no event title on chain — every question embeds its own strike — so the
    * shared question is recovered by removing the price from it.
    */
-  const title = ladder ? ladderTitle(market.question) : market.question;
+  const title =
+    market.categoryId === "sports"
+      ? matchTitle(market)
+      : ladder
+        ? ladderTitle(market.question)
+        : market.question;
 
   return (
     <div
@@ -89,6 +95,12 @@ export function MarketCard({
         {title}
       </div>
 
+      {market.categoryId === "sports" && (
+        <div className="muted" style={{ fontSize: 12 }}>
+          {competitionName(market.match.competition)} · kick-off {formatTimestamp(market.match.kickoff)}
+        </div>
+      )}
+
       {/* Crypto questions read alike at a glance, so surface the term that
           actually distinguishes them. */}
       {isPriceMarket(market) && (
@@ -126,7 +138,9 @@ export function MarketCard({
       >
         <span style={{ whiteSpace: "nowrap" }}>
           {ladder
-            ? `${ladder.rungs.length} strikes`
+            ? market.categoryId === "sports"
+              ? "Home · Draw · Away"
+              : `${ladder.rungs.length} strikes`
             : yes === null
               ? "No stakes yet"
               : `Yes ${formatPercent(yesShown)} · No ${formatPercent(no)}`}
