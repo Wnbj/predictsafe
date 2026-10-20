@@ -68,12 +68,20 @@ export function Markets({
     [inCategory],
   );
 
-  const filtered = useMemo(() => {
-    let out = showRehearsals
-      ? [...inCategory]
-      : inCategory.filter((m) => !isUnstakedAndResolved(m));
+  /**
+   * The test-market and status filters, shared by the board and by every
+   * count on this page — the tab numbers used to skip the status filter and
+   * read "Crypto 22" over a board showing far fewer active markets.
+   */
+  const shown = (ms: Market[]) => {
+    let out = showRehearsals ? [...ms] : ms.filter((m) => !isUnstakedAndResolved(m));
     if (status === "active") out = out.filter(isActive);
     else if (status === "resolved") out = out.filter((m) => !isActive(m));
+    return out;
+  };
+
+  const filtered = useMemo(() => {
+    const out = shown(inCategory);
 
     if (sort === "backed") {
       out.sort((a, b) => {
@@ -90,13 +98,17 @@ export function Markets({
     // Array.sort is stable, so the chosen order holds within each half.
     out.sort((a, b) => Number(isActive(b)) - Number(isActive(a)));
     return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `shown` reads only showRehearsals and status
   }, [inCategory, showRehearsals, sort, status]);
 
-  const activeCount = useMemo(() => inCategory.filter(isActive).length, [inCategory]);
+  // Counted in CARDS, as the board shows them: a match is three markets and a
+  // ladder up to five, but each is one card and one question to a reader.
+  const cards = useMemo(() => groupIntoEvents(filtered), [filtered]);
+  const activeCount = useMemo(() => groupIntoEvents(inCategory.filter(isActive)).length, [inCategory]);
 
   const pooled = inCategory.reduce((sum, m) => sum + totalPool(m), 0n);
-  const visible = (c: CategoryId) =>
-    markets.filter((m) => m.categoryId === c && (showRehearsals || !isUnstakedAndResolved(m))).length;
+  const visible = (c: CategoryId | "all") =>
+    groupIntoEvents(shown(c === "all" ? markets : markets.filter((m) => m.categoryId === c))).length;
 
   return (
     <div className="page">
@@ -109,7 +121,7 @@ export function Markets({
           <div>
             <div className="eyebrow">Prediction markets · settled by Chainlink CRE</div>
             <div className="wallet-total">
-              {filtered.length} market{filtered.length === 1 ? "" : "s"}
+              {cards.length} market{cards.length === 1 ? "" : "s"}
             </div>
             <div className="muted" style={{ fontSize: 12 }}>
               {rehearsalCount > 0 ? (
@@ -150,6 +162,7 @@ export function Markets({
             onClick={() => onCategoryFilter("all")}
           >
             All
+            <span className="muted-strong" style={{ fontSize: 12 }}>{visible("all")}</span>
           </button>
           {CATEGORIES.map((c) => (
             <button
@@ -222,7 +235,7 @@ export function Markets({
               reader sees as one question is the noise a ladder removes, and it
               also throws away the shape — the rungs only mean anything next to
               each other. */}
-          {groupIntoEvents(filtered).map((event) => (
+          {cards.map((event) => (
             <MarketCard
               key={event.key}
               market={event.featured}
