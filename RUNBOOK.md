@@ -1476,6 +1476,14 @@ has never mattered here, but it is not an exact snapshot.
 hour sees identical bytes. The contract refuses a report older than the latest
 (`Stale`) or more than ten minutes in the future.
 
+**The first real run was refused for gas** — 22:45 UTC on 2026-10-20, tx
+`0x798bd199…`. The enclave did its part: the report carried band 3 against
+483.20 mUSDC with the custodian's 22:00 timestamp. But the transaction spent
+684,526 of a 700,000 limit and the forwarder recorded `result = false`:
+checking ten node signatures takes most of it, and the receiver's first write
+fills five cold storage slots. Raised to 1.2M. The execution itself read
+SUCCESS — as always, only `ReportProcessed` tells a delivery from a refusal.
+
 **Verify a run:** `count()` and `latest()` on `ReserveAttestation`, the
 `Attested` event, and — as for every receiver — `ReportProcessed(result=true)`
 on the forwarder in the same tx. `cre execution list predictsafe-reserve` for
