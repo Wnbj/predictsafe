@@ -386,6 +386,15 @@ export interface LpPosition {
   withdrawn: boolean;
   /** `poolValue` is a mark rather than a claim while the market is open. */
   marked: boolean;
+  /**
+   * The shares this wallet's DEPOSITS handed back — each deposit's
+   * `yesResidual`/`noResidual`, summed. Not the wallet's whole holding in the
+   * market: shares it BOUGHT are a trading position, and counting them here
+   * reported a provider whose deposit was flat as +56 mUSDC (2026-10-20,
+   * football market 0: 10 mUSDC deposited beside 52 mUSDC of trades).
+   */
+  residualYes: bigint;
+  residualNo: bigint;
 }
 
 export interface TraderStats {

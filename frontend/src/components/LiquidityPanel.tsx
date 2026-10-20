@@ -10,7 +10,7 @@ import {
   ammAddLiquidityCall,
 } from "../lib/chain";
 import { writeWithApproval } from "../lib/approval";
-import { lpPnl, markShares } from "../lib/lp";
+import { lpPnl, residualValue } from "../lib/lp";
 import { MarketStatus, type Market, type Position, isAmm } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
@@ -137,14 +137,15 @@ export function LiquidityPanel({
       ? Number((quote.lpShares * 10_000n) / (market.totalLpShares + quote.lpShares)) / 100
       : 0;
 
-  const residualValue = lp ? markShares(market, position?.yes ?? 0n, position?.no ?? 0n) : 0n;
   /*
-   * `shareEntitlement`, not `entitlement`. `lpPnl` adds the pool claim itself,
-   * and `entitlement` already contains it, so passing the total counted the
-   * pool twice: a provider who got back exactly their deposit was reported up
-   * by the size of their own pool claim, with a matching phantom IL.
+   * Only the shares the DEPOSITS handed back — not the wallet's whole holding.
+   * Valuing every share here put trades into the liquidity P&L: a provider who
+   * had also bought 52 mUSDC of shares on the same market read "+56.52 mUSDC
+   * (IL +56.52)" for a deposit that was exactly flat. The same held after
+   * settlement, where `shareEntitlement` paid out the traded shares too.
    */
-  const pnl = lp ? lpPnl(lp, resolved ? position?.shareEntitlement ?? 0n : residualValue) : null;
+  const residual = lp ? residualValue(market, lp, position?.yes ?? 0n, position?.no ?? 0n) : 0n;
+  const pnl = lp ? lpPnl(lp, residual) : null;
 
   return (
     <aside className="trade-panel" style={{ marginTop: "var(--space-4)" }}>

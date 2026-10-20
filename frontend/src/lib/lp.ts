@@ -1,5 +1,6 @@
 import {
   MarketStatus,
+  Outcome,
   type LpEvent,
   type LpPosition,
   type Market,
@@ -130,6 +131,7 @@ export function buildLpPosition(
   chainPosition: { shares: bigint; totalShares: bigint; withdrawn: boolean; claimable: bigint } | undefined,
   deposited: bigint,
   feesEarned: bigint,
+  residual: { yes: bigint; no: bigint } = { yes: 0n, no: 0n },
 ): LpPosition | null {
   if (!chainPosition || chainPosition.shares === 0n) return null;
 
@@ -144,7 +146,44 @@ export function buildLpPosition(
       : markPoolValue(m, chainPosition.shares, chainPosition.totalShares),
     withdrawn: chainPosition.withdrawn,
     marked: !resolved,
+    residualYes: residual.yes,
+    residualNo: residual.no,
   };
+}
+
+/**
+ * What the shares a provider's deposits handed back are worth: marked at the
+ * price while the market is open, at what `redeem` pays once it is resolved.
+ *
+ * Capped at what the wallet still holds — residual shares can be sold or
+ * redeemed like any others, and what is gone is no longer the provider's.
+ * Only the RESIDUAL is valued here; shares bought by trading are a separate
+ * position and belong in the trading P&L, not the liquidity one.
+ */
+export function residualValue(m: Market, lp: LpPosition, heldYes: bigint, heldNo: bigint): bigint {
+  if (!isAmm(m)) return 0n;
+  const yes = lp.residualYes < heldYes ? lp.residualYes : heldYes;
+  const no = lp.residualNo < heldNo ? lp.residualNo : heldNo;
+  const resolved = m.status === MarketStatus.Settled || m.status === MarketStatus.Void;
+  if (!resolved) return markShares(m, yes, no);
+  if (m.status === MarketStatus.Void || m.outcome === Outcome.Void) return (yes + no) / 2n;
+  return m.outcome === Outcome.Yes ? yes : m.outcome === Outcome.No ? no : 0n;
+}
+
+/** The shares each of this wallet's deposits left with it, summed per market. */
+export function residualsByMarket(
+  lpEvents: LpEvent[],
+  account: string | null,
+): Map<string, { yes: bigint; no: bigint }> {
+  const out = new Map<string, { yes: bigint; no: bigint }>();
+  if (!account) return out;
+  const me = account.toLowerCase();
+  for (const e of lpEvents) {
+    if (e.direction !== "add" || e.provider.toLowerCase() !== me) continue;
+    const r = out.get(e.marketKey) ?? { yes: 0n, no: 0n };
+    out.set(e.marketKey, { yes: r.yes + (e.yesResidual ?? 0n), no: r.no + (e.noResidual ?? 0n) });
+  }
+  return out;
 }
 
 /**

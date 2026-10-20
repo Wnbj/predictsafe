@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeFees, buildLpPosition, lpPnl, markPoolValue, markShares } from "./lp";
+import { attributeFees, buildLpPosition, lpPnl, markPoolValue, markShares, residualValue, residualsByMarket } from "./lp";
 import { MarketStatus, Outcome, type LpEvent, type Market, type TradeEvent } from "./types";
 import { amm0 } from "./fixtures";
 
@@ -197,6 +197,8 @@ describe("lpPnl", () => {
     poolValue: 8_000_000n,
     withdrawn: false,
     marked: false,
+    residualYes: 0n,
+    residualNo: 0n,
   };
 
   /**
@@ -243,6 +245,8 @@ describe("lpPnl", () => {
       poolValue: 13_333_333n,
       feesEarned: 0n,
       marked: false,
+      residualYes: 0n,
+      residualNo: 0n,
     };
 
     const { value, pnl, impermanentLoss } = lpPnl(settled, 26_666_667n);
@@ -252,5 +256,57 @@ describe("lpPnl", () => {
 
     // What the double count looked like: the pool claim, reported as profit.
     expect(lpPnl(settled, 40_000_000n).pnl).toBe(13_333_333n);
+  });
+});
+
+/**
+ * The liquidity P&L values the shares the DEPOSIT handed back — not every
+ * share the wallet holds. Measured on football market 0, 2026-10-20: 11 mUSDC
+ * of Yes and 41 of No bought, then 10 deposited at a 4.12% Yes price, which
+ * handed back 9.569380 No. Counting all 16.69 Yes and 67.80 No showed
+ * "+56.52 mUSDC (IL +56.52)" for a deposit that was flat.
+ */
+describe("residual shares", () => {
+  const market = { ...amm0, yesPriceBps: 412 } as typeof amm0;
+  const lp = {
+    shares: 2_207_222n,
+    totalShares: 12_207_222n,
+    deposited: 10_000_000n,
+    feesEarned: 0n,
+    poolValue: 825_000n,
+    withdrawn: false,
+    marked: true,
+    residualYes: 0n,
+    residualNo: 9_569_380n,
+  };
+
+  it("counts only what the deposits handed back, so a fresh deposit is flat", () => {
+    const value = residualValue(market, lp, 16_694_246n, 67_800_239n);
+    expect(value).toBe((9_569_380n * 9_588n) / 10_000n);
+    const { pnl } = lpPnl(lp, value);
+    // Within a cent of zero: the deposit moved no value, only rounding.
+    expect(pnl > -10_000n && pnl < 10_000n).toBe(true);
+  });
+
+  it("never counts more than the wallet still holds", () => {
+    expect(residualValue(market, lp, 0n, 1_000_000n)).toBe((1_000_000n * 9_588n) / 10_000n);
+  });
+
+  it("sums each deposit's residuals per market, for this wallet only", () => {
+    const me = "0x00000000000000000000000000000000000a11ce";
+    const ev = (provider: string, no: bigint) => ({
+      marketKey: "sports:0",
+      provider: provider as `0x${string}`,
+      direction: "add" as const,
+      amount: 10_000_000n,
+      lpShares: 1n,
+      totalLpShares: 1n,
+      yesResidual: 0n,
+      noResidual: no,
+      blockNumber: 1n,
+      txHash: "0x" as `0x${string}`,
+    });
+    const r = residualsByMarket([ev(me, 5n), ev(me, 7n), ev("0x00000000000000000000000000000000000000b0", 100n)], me);
+    expect(r.get("sports:0")).toEqual({ yes: 0n, no: 12n });
   });
 });

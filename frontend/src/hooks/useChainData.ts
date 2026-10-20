@@ -12,7 +12,7 @@ import {
 } from "../lib/chain";
 import { claimablePayout } from "../lib/pricing";
 import { loadCachedMarkets, saveMarkets } from "../lib/marketCache";
-import { attributeFees, buildLpPosition, depositsByMarket } from "../lib/lp";
+import { attributeFees, buildLpPosition, depositsByMarket, residualsByMarket } from "../lib/lp";
 import {
   MarketStatus,
   Outcome,
@@ -87,6 +87,7 @@ export function derivePositions(
   }
 
   const deposits = depositsByMarket(lpEvents, account);
+  const residuals = residualsByMarket(lpEvents, account);
   const fees = attributeFees(lpEvents, trades);
 
   const out: Position[] = [];
@@ -121,6 +122,7 @@ export function derivePositions(
           lpStake,
           deposits.get(m.key) ?? 0n,
           fees.get(m.key)?.get(account?.toLowerCase() ?? "") ?? 0n,
+          residuals.get(m.key),
         )
       : null;
 
