@@ -1963,3 +1963,24 @@ input:focus {
   padding: 6px 10px;
   font-size: 12px;
 }
+
+/* ---- liquidity panel: folded, scenarios rather than jargon ---------------- */
+
+.lp-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--color-accent);
+  cursor: pointer;
+  font: inherit;
+}
+.lp-heading {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-neutral-300);
+  margin-top: 2px;
+}

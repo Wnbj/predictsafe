@@ -233,3 +233,57 @@ export function depositsByMarket(
   }
   return out;
 }
+
+/** What a liquidity position pays in each outcome, if the market settled on today's pool. */
+export interface LpScenarios {
+  ifYes: bigint;
+  ifNo: bigint;
+  ifVoid: bigint;
+}
+
+/**
+ * The provider's whole payout per outcome: their pro-rata slice of the
+ * WINNING side of the pool — the same arithmetic as the contract's `_lpClaim`
+ * — plus the residual shares their deposits handed back, which pay like any
+ * other share. Fees are already inside the reserves, so they are included.
+ *
+ * Stated as scenarios because that is the honest picture of the role: a
+ * provider takes no side by choice, but ends up holding whatever the traders
+ * sold to the pool, and one of the two outcomes is worth less than the other
+ * once anyone has traded.
+ */
+export function lpScenarios(
+  m: Market,
+  shares: bigint,
+  totalShares: bigint,
+  residualYes: bigint,
+  residualNo: bigint,
+): LpScenarios {
+  if (!isAmm(m) || totalShares === 0n) return { ifYes: residualYes, ifNo: residualNo, ifVoid: (residualYes + residualNo) / 2n };
+  const y = m.yesReserve;
+  const n = m.noReserve;
+  return {
+    ifYes: (y * shares) / totalShares + residualYes,
+    ifNo: (n * shares) / totalShares + residualNo,
+    ifVoid: (((y + n) / 2n) * shares) / totalShares + (residualYes + residualNo) / 2n,
+  };
+}
+
+/**
+ * The same, for a deposit not yet made, from the contract's own quote: the
+ * deposit mints `amount` of each side, the pool keeps what is not handed back,
+ * and the new LP shares join the total.
+ */
+export function depositScenarios(
+  m: Market,
+  amount: bigint,
+  quote: { lpShares: bigint; yesResidual: bigint; noResidual: bigint },
+): LpScenarios {
+  if (!isAmm(m) || quote.lpShares === 0n) return { ifYes: 0n, ifNo: 0n, ifVoid: 0n };
+  const after = {
+    ...m,
+    yesReserve: m.yesReserve + amount - quote.yesResidual,
+    noReserve: m.noReserve + amount - quote.noResidual,
+  } as Market;
+  return lpScenarios(after, quote.lpShares, m.totalLpShares + quote.lpShares, quote.yesResidual, quote.noResidual);
+}

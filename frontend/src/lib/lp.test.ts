@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeFees, buildLpPosition, lpPnl, markPoolValue, markShares, residualValue, residualsByMarket } from "./lp";
+import { attributeFees, buildLpPosition, depositScenarios, lpPnl, lpScenarios, markPoolValue, markShares, residualValue, residualsByMarket } from "./lp";
 import { MarketStatus, Outcome, type LpEvent, type Market, type TradeEvent } from "./types";
 import { amm0 } from "./fixtures";
 
@@ -308,5 +308,30 @@ describe("residual shares", () => {
     });
     const r = residualsByMarket([ev(me, 5n), ev(me, 7n), ev("0x00000000000000000000000000000000000000b0", 100n)], me);
     expect(r.get("sports:0")).toEqual({ yes: 0n, no: 12n });
+  });
+});
+
+/**
+ * The scenarios a provider is shown, from football market 0 as it stood on
+ * 2026-10-20: reserves 55,305,754 Yes and 2,381,579 No, 12,207,222 LP shares
+ * of which this wallet holds 2,207,222, plus 9,569,380 No handed back by the
+ * deposit. Deposited at the pool's own price, the position pays about what
+ * went in WHICHEVER way the match goes — the risk only appears when traders
+ * move the price afterwards.
+ */
+describe("liquidity scenarios", () => {
+  const market = { ...amm0, yesReserve: 55_305_754n, noReserve: 2_381_579n, totalLpShares: 12_207_222n } as typeof amm0;
+
+  it("pays a slice of the winning side plus the residual shares", () => {
+    const s = lpScenarios(market, 2_207_222n, 12_207_222n, 0n, 9_569_380n);
+    expect(s.ifYes).toBe((55_305_754n * 2_207_222n) / 12_207_222n);
+    expect(s.ifNo).toBe((2_381_579n * 2_207_222n) / 12_207_222n + 9_569_380n);
+    // A deposit at the pool's price is worth about the same either way: ~10 mUSDC.
+    for (const v of [s.ifYes, s.ifNo]) expect(v > 9_900_000n && v < 10_100_000n).toBe(true);
+  });
+
+  it("previews a deposit from the contract's quote the same way", () => {
+    const s = depositScenarios(market, 10_000_000n, { lpShares: 2_207_222n, yesResidual: 0n, noResidual: 9_569_380n });
+    for (const v of [s.ifYes, s.ifNo]) expect(v > 9_900_000n && v < 10_100_000n).toBe(true);
   });
 });

@@ -10,7 +10,8 @@ import {
   ammAddLiquidityCall,
 } from "../lib/chain";
 import { writeWithApproval } from "../lib/approval";
-import { lpPnl, residualValue } from "../lib/lp";
+import { depositScenarios, lpPnl, lpScenarios, residualValue } from "../lib/lp";
+import { outcomeLabel as sportsOutcomeLabel } from "../lib/sports";
 import { MarketStatus, type Market, type Position, isAmm } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
@@ -45,6 +46,8 @@ export function LiquidityPanel({
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastTx, setLastTx] = useState<string | null>(null);
+  /** null: follow the default — open only for a wallet already providing here. */
+  const [showAdvanced, setShowAdvanced] = useState<boolean | null>(null);
   const [quote, setQuote] = useState<
     { lpShares: bigint; yesResidual: bigint; noResidual: bigint } | null
   >(null);
@@ -147,127 +150,171 @@ export function LiquidityPanel({
   const residual = lp ? residualValue(market, lp, position?.yes ?? 0n, position?.no ?? 0n) : 0n;
   const pnl = lp ? lpPnl(lp, residual) : null;
 
+  const yesLabel = market.categoryId === "sports" ? `If ${sportsOutcomeLabel(market)}${market.match.outcome === 2 ? "" : " win"}` : "If Yes";
+  const noLabel = market.categoryId === "sports" ? (market.match.outcome === 2 ? "If not a draw" : "If not") : "If No";
+  const held = lp
+    ? lpScenarios(
+        market,
+        lp.shares,
+        lp.totalShares,
+        lp.residualYes < (position?.yes ?? 0n) ? lp.residualYes : (position?.yes ?? 0n),
+        lp.residualNo < (position?.no ?? 0n) ? lp.residualNo : (position?.no ?? 0n),
+      )
+    : null;
+  const preview = quote && amount ? depositScenarios(market, amount, quote) : null;
+  // Folded until asked for, unless this wallet already provides here.
+  const expanded = showAdvanced ?? Boolean(lp);
+
   return (
     <aside className="trade-panel" style={{ marginTop: "var(--space-4)" }}>
-      <div className="eyebrow">Liquidity</div>
+      <button className="lp-toggle" onClick={() => setShowAdvanced(!expanded)} aria-expanded={expanded}>
+        <span className="eyebrow">Provide liquidity · advanced</span>
+        <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+      </button>
 
-      {lp && (
-        <div style={{ display: "grid", gap: 4, fontSize: 11 }} className="muted-strong">
-          <Row label="Your share of the pool" value={`${sharePct.toFixed(2)}%`} />
-          <Row label="Deposited" value={formatToken(lp.deposited)} />
-          <Row
-            label={lp.marked ? "Pool value (marked)" : "Pool claim"}
-            value={formatToken(lp.poolValue)}
-          />
-          <Row label="Fees earned" value={formatToken(lp.feesEarned)} />
-          {pnl && (
-            <Row
-              label={lp.marked ? "P&L if it settled now" : "P&L"}
-              value={`${formatSigned(pnl.pnl)} (IL ${formatSigned(-pnl.impermanentLoss)})`}
-            />
-          )}
-        </div>
-      )}
-
-      {open && (
+      {!expanded ? (
+        <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+          Be the market maker instead of a player: earn {(market.feeBps / 100).toFixed(2)}% of every trade, and take
+          the other side of whoever trades against the pool.
+        </p>
+      ) : (
         <>
-          <label className="muted-strong" style={{ fontSize: 11 }}>
-            Add liquidity
-            <input
-              className="input"
-              inputMode="decimal"
-              value={amountText}
-              onChange={(e) => setAmountText(e.target.value)}
-              style={{ marginTop: 4 }}
-            />
-          </label>
+          {/*
+            * The role, in two sentences, before any number. A provider takes no
+            * side by choice, but holds whatever traders sell to the pool — and
+            * when they turn out right, that is the losing side. On a prediction
+            * market that loss is realised at settlement, not "impermanent".
+            */}
+          <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+            You back every trade instead of picking a side. You earn the fees; when traders are right, the pool
+            ends up holding what they sold it — and that part is lost at settlement. Most players should simply
+            trade.
+          </p>
 
-          <div style={{ display: "grid", gap: 4, fontSize: 11 }} className="muted-strong">
-            <Row
-              label="LP shares"
-              value={quote ? formatToken(quote.lpShares, { symbol: false }) : "—"}
-            />
-            <Row label="Pool share" value={quote ? `${quotePct.toFixed(2)}%` : "—"} />
-            {/*
-              * The surprising half, stated up front. The pool can only take a
-              * deposit in its own ratio, so whatever it cannot absorb comes
-              * back as a directional position — a depositor who is not told
-              * this discovers it only when the market settles against them.
-              */}
-            {quote && (quote.yesResidual > 0n || quote.noResidual > 0n) && (
-              <Row
-                label="Position you keep"
-                value={
-                  quote.yesResidual > 0n
-                    ? `${formatToken(quote.yesResidual, { symbol: false })} Yes`
-                    : `${formatToken(quote.noResidual, { symbol: false })} No`
-                }
-              />
-            )}
-          </div>
+          {lp && held && (
+            <>
+              <div className="lp-heading">Your liquidity</div>
+              <dl className="bridge-facts">
+                <div>
+                  <dt>Put in</dt>
+                  <dd>{formatToken(lp.deposited)} · {sharePct.toFixed(2)}% of the pool</dd>
+                </div>
+                <div>
+                  <dt>Fees earned so far</dt>
+                  <dd>{formatToken(lp.feesEarned)}</dd>
+                </div>
+                {!resolved && (
+                  <>
+                    <Scenario label={yesLabel} value={held.ifYes} against={lp.deposited} />
+                    <Scenario label={noLabel} value={held.ifNo} against={lp.deposited} />
+                  </>
+                )}
+                {resolved && pnl && (
+                  <div>
+                    <dt>Result</dt>
+                    <dd className={pnl.pnl > 0n ? "up" : pnl.pnl < 0n ? "down" : undefined}>{formatSigned(pnl.pnl)}</dd>
+                  </div>
+                )}
+              </dl>
+              {!resolved && (
+                <p className="muted-strong" style={{ fontSize: 11, margin: 0 }}>
+                  If it settled on today's pool. Trades from here on move both numbers — fees in your favour, informed
+                  traders against you.
+                </p>
+              )}
+            </>
+          )}
 
-          <button
-            className="btn btn-accent"
-            disabled={!account || !amount || amount <= 0n || insufficient || busy !== null}
-            onClick={() => void doAdd()}
-          >
-            {busy === "approving"
-              ? "Approving…"
-              : busy === "adding"
-                ? "Adding…"
-                : insufficient
-                  ? `Not enough ${TOKEN_SYMBOL}`
-                  : "Add liquidity"}
-          </button>
+          {open && (
+            <>
+              <div className="lp-heading">{lp ? "Add more" : "Add liquidity"}</div>
+              <div className="bridge-amount">
+                <input
+                  inputMode="decimal"
+                  value={amountText}
+                  onChange={(e) => setAmountText(e.target.value.replace(",", "."))}
+                  aria-label="Liquidity to add"
+                />
+                <span className="bridge-amount-symbol">{TOKEN_SYMBOL}</span>
+              </div>
+
+              <dl className="bridge-facts">
+                <div>
+                  <dt>Share of the pool</dt>
+                  <dd>{quote ? `${quotePct.toFixed(2)}%` : "—"}</dd>
+                </div>
+                {/*
+                  * The surprising half, stated up front. The pool can only take
+                  * a deposit in its own ratio, so whatever it cannot absorb comes
+                  * back as a directional position — a depositor who is not told
+                  * this discovers it only when the market settles against them.
+                  */}
+                {quote && (quote.yesResidual > 0n || quote.noResidual > 0n) && (
+                  <div>
+                    <dt>Shares you also keep</dt>
+                    <dd>
+                      {quote.yesResidual > 0n
+                        ? `${formatToken(quote.yesResidual, { symbol: false })} Yes`
+                        : `${formatToken(quote.noResidual, { symbol: false })} No`}
+                    </dd>
+                  </div>
+                )}
+                {preview && amount !== null && amount > 0n && (
+                  <>
+                    <Scenario label={yesLabel} value={preview.ifYes} against={amount} />
+                    <Scenario label={noLabel} value={preview.ifNo} against={amount} />
+                  </>
+                )}
+              </dl>
+
+              <button
+                className="btn btn-accent bridge-submit"
+                disabled={!account || !amount || amount <= 0n || insufficient || busy !== null}
+                onClick={() => void doAdd()}
+              >
+                {busy === "approving"
+                  ? "Approving…"
+                  : busy === "adding"
+                    ? "Adding…"
+                    : insufficient
+                      ? `Not enough ${TOKEN_SYMBOL}`
+                      : "Add liquidity"}
+              </button>
+            </>
+          )}
+
+          {/*
+            * Withdrawing is a SEPARATE claim from redeeming shares, with its own
+            * one-shot guard on chain. One button doing both would leave whichever
+            * half it did not fire stranded permanently.
+            */}
+          {resolved && lp && !lp.withdrawn && (
+            <button
+              className="btn btn-accent"
+              disabled={!account || busy !== null || lp.poolValue === 0n}
+              onClick={() => void run("withdrawing", (a) => sendAmmWithdrawLiquidity(a, market))}
+            >
+              {busy === "withdrawing" ? "Withdrawing…" : `Withdraw ${formatToken(lp.poolValue)} from pool`}
+            </button>
+          )}
+
+          {resolved && lp?.withdrawn && (
+            <p className="muted" style={{ fontSize: 11, margin: 0 }}>
+              Pool claim withdrawn. Any shares the deposit left you are redeemed separately.
+            </p>
+          )}
+
+          {!open && !resolved && (
+            <p className="muted" style={{ fontSize: 11, margin: 0 }}>
+              Trading has closed — liquidity can be withdrawn once the market settles.
+            </p>
+          )}
         </>
       )}
 
-      {/*
-        * Withdrawing is a SEPARATE claim from redeeming shares, with its own
-        * one-shot guard on chain. One button doing both would leave whichever
-        * half it did not fire stranded permanently.
-        */}
-      {resolved && lp && !lp.withdrawn && (
-        <button
-          className="btn btn-accent"
-          disabled={!account || busy !== null || lp.poolValue === 0n}
-          onClick={() => void run("withdrawing", (a) => sendAmmWithdrawLiquidity(a, market))}
-        >
-          {busy === "withdrawing"
-            ? "Withdrawing…"
-            : `Withdraw ${formatToken(lp.poolValue)} from pool`}
-        </button>
-      )}
-
-      {resolved && lp?.withdrawn && (
-        <p className="muted" style={{ fontSize: 11, margin: 0 }}>
-          Pool claim withdrawn. Any shares the deposit left you are redeemed separately.
-        </p>
-      )}
-
-      {!open && !resolved && (
-        <p className="muted" style={{ fontSize: 11, margin: 0 }}>
-          Trading has closed — liquidity can be withdrawn once the market settles.
-        </p>
-      )}
-
-      {market.feeBps > 0 && open && (
-        <p className="muted" style={{ fontSize: 11, margin: 0 }}>
-          Providers earn {(market.feeBps / 100).toFixed(2)}% of every trade, kept in the pool.
-        </p>
-      )}
-
-      {error && (
-        <p style={{ color: "var(--color-loss)", fontSize: 11, margin: 0 }}>{error}</p>
-      )}
+      {error && <p style={{ color: "var(--color-negative)", fontSize: 11, margin: 0 }}>{error}</p>}
       {lastTx && (
-        <a
-          className="muted"
-          style={{ fontSize: 11 }}
-          href={txUrl(lastTx)}
-          target="_blank"
-          rel="noreferrer"
-        >
+        <a className="muted" style={{ fontSize: 11 }} href={txUrl(lastTx)} target="_blank" rel="noreferrer">
           View transaction
         </a>
       )}
@@ -275,14 +322,22 @@ export function LiquidityPanel({
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+/** One outcome's payout, with how it compares to what went in. */
+function Scenario({ label, value, against }: { label: string; value: bigint; against: bigint }) {
+  const diff = value - against;
   return (
-    <div style={{ display: "flex", justifyContent: "space-between" }}>
-      <span>{label}</span>
-      <span style={{ color: "var(--color-text)" }}>{value}</span>
+    <div>
+      <dt>{label}</dt>
+      <dd>
+        {formatToken(value)}{" "}
+        <span className={diff > 0n ? "up" : diff < 0n ? "down" : "muted"} style={{ fontSize: 11 }}>
+          ({formatSigned(diff)})
+        </span>
+      </dd>
     </div>
   );
 }
+
 
 function friendlyError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
