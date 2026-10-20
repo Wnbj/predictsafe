@@ -139,21 +139,52 @@ export type Config = {
   schedulerContractAddress?: string
   /** Cron schedule for opening scheduled markets, six-field form. */
   schedulerSchedule?: string
-  /** Which markets to keep open — see `nextSlot`. */
+  /** Which markets to keep open — see `candidateFor`. */
   marketSchedules?: MarketScheduleRule[]
-  /** Chainlink Data Feeds the strikes are taken from, by asset. */
-  priceFeeds?: Partial<Record<ScheduledAsset, string>>
+  /**
+   * Chainlink Data Feeds the strikes are taken from, by symbol (BTC, XAU,
+   * USTB, …). A bare address means 8 decimals.
+   */
+  priceFeeds?: Record<string, string | { address: string; decimals: number }>
   gasLimit: string
 }
 
 export type ScheduledAsset = "BTC" | "ETH"
+export type ScheduledKind = "crypto" | "stock" | "reserve" | "flight" | "amm"
 
+/**
+ * One kind of market to keep open. `kind` defaults to crypto, the only kind
+ * the first scheduler had.
+ */
 export interface MarketScheduleRule {
-  asset: ScheduledAsset
-  /** Slot length: a market expires at every multiple of this, in UTC. */
-  horizonSeconds: number
+  kind?: ScheduledKind
+  /** crypto, amm: the asset; also the feed the strike comes from. */
+  asset?: ScheduledAsset
+  /** stock, reserve: the symbol registered on the contract, and its feed. */
+  symbol?: string
+  /** stock, reserve: what the question calls it — "gold (XAU)". */
+  label?: string
+  /** stock, reserve: "$" for a price, "" for a count of tokens. */
+  unit?: string
+  /** Slot length: a market expires at every multiple of this, in UTC… */
+  horizonSeconds?: number
+  /** …shifted by this — 72000 puts a daily slot at 20:00 UTC. */
+  offsetSeconds?: number
   /** Staking closes this long before expiry. */
-  closeBeforeSeconds: number
+  closeBeforeSeconds?: number
+  /** Only expiries on Monday to Friday, UTC: an exchange-hours feed. */
+  weekdaysOnly?: boolean
+  /** Strikes round to this, in the feed's units. Defaults per asset. */
+  strikeStep?: number
+  /** stock, reserve: how old the round at expiry may be. */
+  maxStalenessSeconds?: number
+  /** flight: flight number and delay threshold, for the flight `daysAhead`. */
+  flight?: string
+  thresholdMinutes?: number
+  daysAhead?: number
+  /** amm: opening liquidity in whole mUSDC, and the pool fee. */
+  liquidity?: number
+  feeBps?: number
 }
 
 const OUTCOME_YES = 1
@@ -2121,39 +2152,40 @@ export const onRequestDue = (runtime: Runtime<Config>): string => {
 // --- markets that open themselves --------------------------------------------
 
 /**
- * Keeps the board from going empty. On a schedule, for each rule — "a BTC
- * market every hour", "an ETH market every day" — this handler works out the
- * slot that ends next, skips it if MarketScheduler already opened it, takes a
- * strike from the asset's Chainlink Data Feed rounded to a number a person
- * would type, and reports the terms. The contract opens the market through
- * the same public `newMarket` the app's "Create market" uses, and the keeper
- * and the crypto handler settle it like any other.
+ * Keeps the board from going empty, in every category. On a schedule, for each
+ * rule — "a BTC market every hour", "gold every four hours on weekdays",
+ * "tomorrow's BA286" — this handler works out the slot that ends next, skips
+ * the ones MarketScheduler already opened (one read for all of them), takes a
+ * strike from the right Chainlink Data Feed, and reports the terms. The
+ * contract opens each market through the same public `newMarket` a person
+ * would call, and the keeper and the log handlers settle it like any other.
  *
- * Every node must name the same market, so time comes from `runtime.now()` —
- * DON time — and the price from the finalized block. A strike a few minutes
- * stale is still near the money, which is all it is for.
+ * Every node must name the same markets, so time comes from `runtime.now()` —
+ * DON time — and prices from the finalized block.
  */
 const schedulerAbi = [
   {
     type: "function",
-    name: "scheduled",
+    name: "scheduledMany",
     stateMutability: "view",
-    inputs: [
-      { name: "asset", type: "uint8" },
-      { name: "closeTime", type: "uint64" },
-      { name: "expiryTime", type: "uint64" },
-    ],
-    outputs: [
-      { name: "exists", type: "bool" },
-      { name: "marketId", type: "uint256" },
-    ],
+    inputs: [{ name: "keys", type: "bytes32[]" }],
+    outputs: [{ name: "open", type: "bool[]" }],
   },
 ] as const
 
-/** CryptoMarket.Asset, in the contract's order. */
+/** MarketScheduler.Kind, in the contract's order. */
+export const SCHEDULED_KIND_INDEX: Record<ScheduledKind, number> = {
+  crypto: 0,
+  stock: 1,
+  reserve: 2,
+  flight: 3,
+  amm: 4,
+}
+
+/** CryptoMarket.Asset and AmmMarket.Asset, in the contracts' order. */
 const SCHEDULED_ASSET_INDEX: Record<ScheduledAsset, number> = { BTC: 0, ETH: 1 }
 
-/** Strikes snap to these, as in the app's Create market form. */
+/** Default strike steps, as in the app's Create market form. */
 export const SCHEDULED_STRIKE_STEP: Record<ScheduledAsset, number> = { BTC: 100, ETH: 10 }
 
 /**
@@ -2163,8 +2195,12 @@ export const SCHEDULED_STRIKE_STEP: Record<ScheduledAsset, number> = { BTC: 100,
  */
 export const SCHEDULE_MIN_STAKING_SECONDS = 10 * 60
 
+/** The contract refuses expiries beyond four days; stay inside that. */
+const SCHEDULE_MAX_AHEAD_SECONDS = 4 * 86400 - 3600
+
 /**
- * Markets opened per report, soonest-closing first; the rest wait an hour.
+ * Markets opened per report, soonest-closing first; the rest wait for the
+ * next run.
  *
  * Sepolia prices storage far above what forge's local EVM measures: one
  * `newMarket` estimated at 590k gas there against ~170k locally (2026-10-19).
@@ -2173,32 +2209,66 @@ export const SCHEDULE_MIN_STAKING_SECONDS = 10 * 60
  */
 export const SCHEDULER_SPECS_PER_REPORT = 2
 
-/** 400k for the envelope, 1M per market: ~1.7x the measured cost of one. */
-export const schedulerGasLimit = (specs: number): string => String(400_000 + 1_000_000 * specs)
+/**
+ * 400k for the envelope, then per market: 1.1M, or 2.2M for an AMM market,
+ * which also mints and moves its opening liquidity (415k locally, so ~1.45M
+ * on Sepolia).
+ */
+export const schedulerGasLimit = (kinds: readonly ScheduledKind[]): string =>
+  String(400_000 + kinds.reduce((sum, k) => sum + (k === "amm" ? 2_200_000 : 1_100_000), 0))
+
+const isWeekday = (seconds: number): boolean => {
+  const day = new Date(seconds * 1000).getUTCDay()
+  return day !== 0 && day !== 6
+}
 
 /**
  * The soonest slot after `nowSeconds` that still leaves time to stake: the one
- * ending next, or — once its staking has closed — the one after it. So a
- * daily market whose staking shut at 20:00 is followed by tomorrow's at the
- * next run, rather than leaving the board without one until midnight. Null
- * only for a rule whose staking window is shorter than the minimum.
+ * ending next, or — once its staking has closed, or for a weekdays-only rule
+ * whose next expiry falls on a weekend — a later one. So a daily market whose
+ * staking shut at 20:00 is followed by tomorrow's at the next run, rather than
+ * leaving the board without one until midnight. Null when no slot within the
+ * contract's horizon qualifies.
  */
 export const nextSlot = (
   rule: MarketScheduleRule,
   nowSeconds: number,
 ): { closeTime: number; expiryTime: number } | null => {
-  const h = rule.horizonSeconds
-  const first = Math.floor(nowSeconds / h) * h + h
-  for (const expiryTime of [first, first + h]) {
-    const closeTime = expiryTime - rule.closeBeforeSeconds
-    if (closeTime - nowSeconds >= SCHEDULE_MIN_STAKING_SECONDS) return { closeTime, expiryTime }
+  const h = rule.horizonSeconds ?? 3600
+  const offset = rule.offsetSeconds ?? 0
+  const closeBefore = rule.closeBeforeSeconds ?? 0
+  let expiryTime = Math.floor((nowSeconds - offset) / h) * h + h + offset
+  for (let i = 0; i < 16 && expiryTime - nowSeconds <= SCHEDULE_MAX_AHEAD_SECONDS; i++, expiryTime += h) {
+    const closeTime = expiryTime - closeBefore
+    if (closeTime - nowSeconds < SCHEDULE_MIN_STAKING_SECONDS) continue
+    if (rule.weekdaysOnly && !isWeekday(expiryTime)) continue
+    return { closeTime, expiryTime }
   }
   return null
 }
 
-/** An 8-decimal feed answer, rounded to the nearest `step` dollars, still 8 decimals. */
+/**
+ * A flight `daysAhead` days out, by its UTC date: staking closes when that day
+ * starts, and settlement may be asked two days later, by which time the flight
+ * has landed even if it left late in the evening. The keeper adds its own six
+ * hours on top.
+ */
+export const flightSlot = (
+  rule: MarketScheduleRule,
+  nowSeconds: number,
+): { closeTime: number; expiryTime: number; departureDate: number } | null => {
+  const day = 86400
+  let start = Math.floor(nowSeconds / day) * day + (rule.daysAhead ?? 1) * day
+  if (start - nowSeconds < SCHEDULE_MIN_STAKING_SECONDS) start += day
+  const d = new Date(start * 1000)
+  const departureDate = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate()
+  return { closeTime: start, expiryTime: start + 2 * day, departureDate }
+}
+
+/** An 8-decimal value, rounded to the nearest `step` units, still 8 decimals. */
 export const roundStrike = (answer: bigint, step: number): bigint => {
-  const unit = BigInt(step) * 100_000_000n
+  const unit = BigInt(Math.round(step * 100_000_000))
+  if (unit <= 0n) return answer
   return ((answer + unit / 2n) / unit) * unit
 }
 
@@ -2207,38 +2277,145 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 /** "83300" -> "83,300", without Intl, which the workflow runtime may not have. */
 const thousands = (n: bigint): string => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")
 
-/** The same words the app's Create market form writes, in UTC. */
-export const scheduledQuestion = (asset: ScheduledAsset, strike: bigint, expiryTime: number): string => {
-  const d = new Date(expiryTime * 1000)
-  const hh = String(d.getUTCHours()).padStart(2, "0")
-  const mm = String(d.getUTCMinutes()).padStart(2, "0")
-  return `Will ${asset} be at or above $${thousands(strike / 100_000_000n)} at ${hh}:${mm} UTC on ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}?`
+/** An 8-decimal value as a person writes it: whole units, or cents when it has them. */
+export const formatScheduledValue = (v: bigint): string => {
+  const whole = v / 100_000_000n
+  const cents = (v % 100_000_000n) / 1_000_000n
+  return cents === 0n ? thousands(whole) : `${thousands(whole)}.${cents.toString().padStart(2, "0")}`
 }
 
+const whenUtc = (seconds: number): string => {
+  const d = new Date(seconds * 1000)
+  const hh = String(d.getUTCHours()).padStart(2, "0")
+  const mm = String(d.getUTCMinutes()).padStart(2, "0")
+  return `${hh}:${mm} UTC on ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`
+}
+
+/** The same words the app's Create market form writes, in UTC. */
+export const scheduledQuestion = (asset: ScheduledAsset, strike: bigint, expiryTime: number): string =>
+  `Will ${asset} be at or above $${formatScheduledValue(strike)} at ${whenUtc(expiryTime)}?`
+
+const dateLabel = (yyyymmdd: number): string =>
+  `${MONTHS[Math.floor(yyyymmdd / 100) % 100 - 1]} ${yyyymmdd % 100}`
+
 export interface ScheduledSpec {
-  asset: number
-  strike: bigint
+  kind: number
   closeTime: bigint
   expiryTime: bigint
+  id: string
   question: string
+  terms: `0x${string}`
+}
+
+/** What one rule would open now, before knowing whether it already has. */
+export interface ScheduleCandidate {
+  rule: MarketScheduleRule
+  kind: ScheduledKind
+  id: string
+  closeTime: number
+  expiryTime: number
+  departureDate?: number
+  key: `0x${string}`
+}
+
+/** `keccak256(abi.encode(kind, closeTime, expiryTime, id))`, as MarketScheduler.slotKey. */
+export const scheduledSlotKey = (kind: number, closeTime: number, expiryTime: number, id: string): `0x${string}` =>
+  keccak256(
+    encodeAbiParameters(parseAbiParameters("uint8, uint64, uint64, string"), [
+      kind,
+      BigInt(closeTime),
+      BigInt(expiryTime),
+      id,
+    ]),
+  )
+
+/** The slot a rule names at `nowSeconds`, or null if it names none. */
+export const candidateFor = (rule: MarketScheduleRule, nowSeconds: number): ScheduleCandidate | null => {
+  const kind = rule.kind ?? "crypto"
+  const id = kind === "flight" ? rule.flight : kind === "stock" || kind === "reserve" ? rule.symbol : rule.asset
+  if (!id) return null
+  const slot = kind === "flight" ? flightSlot(rule, nowSeconds) : nextSlot(rule, nowSeconds)
+  if (!slot) return null
+  return {
+    rule,
+    kind,
+    id,
+    ...slot,
+    key: scheduledSlotKey(SCHEDULED_KIND_INDEX[kind], slot.closeTime, slot.expiryTime, id),
+  }
+}
+
+/** The spec for a candidate, given its feed's price at 8 decimals (unused for flights). */
+export const specFor = (c: ScheduleCandidate, price8: bigint): ScheduledSpec => {
+  const r = c.rule
+  const base = {
+    kind: SCHEDULED_KIND_INDEX[c.kind],
+    closeTime: BigInt(c.closeTime),
+    expiryTime: BigInt(c.expiryTime),
+    id: c.id,
+  }
+  if (c.kind === "flight") {
+    const threshold = r.thresholdMinutes ?? 30
+    return {
+      ...base,
+      question: `Will ${c.id} on ${dateLabel(c.departureDate ?? 0)} arrive ${threshold}m+ late?`,
+      terms: encodeAbiParameters(parseAbiParameters("uint32, uint16"), [c.departureDate ?? 0, threshold]),
+    }
+  }
+  if (c.kind === "stock" || c.kind === "reserve") {
+    const strike = roundStrike(price8, r.strikeStep ?? 1)
+    const unit = r.unit ?? "$"
+    return {
+      ...base,
+      question: `Will ${r.label ?? c.id} be at or above ${unit}${formatScheduledValue(strike)} at ${whenUtc(c.expiryTime)}?`,
+      terms: encodeAbiParameters(parseAbiParameters("uint64, uint32"), [
+        strike,
+        r.maxStalenessSeconds ?? 2 * 86400,
+      ]),
+    }
+  }
+  const asset = c.id as ScheduledAsset
+  const strike = roundStrike(price8, r.strikeStep ?? SCHEDULED_STRIKE_STEP[asset])
+  const question = scheduledQuestion(asset, strike, c.expiryTime)
+  if (c.kind === "amm") {
+    return {
+      ...base,
+      question,
+      terms: encodeAbiParameters(parseAbiParameters("uint8, uint64, uint256, uint256, uint16"), [
+        SCHEDULED_ASSET_INDEX[asset],
+        strike,
+        BigInt(r.liquidity ?? 20) * 1_000_000n,
+        5_000n,
+        r.feeBps ?? 30,
+      ]),
+    }
+  }
+  return {
+    ...base,
+    question,
+    terms: encodeAbiParameters(parseAbiParameters("uint8, uint64"), [SCHEDULED_ASSET_INDEX[asset], strike]),
+  }
 }
 
 /** The report `MarketScheduler._processReport` decodes: `abi.encode(Spec[])`. */
 export const encodeSchedulerReport = (specs: readonly ScheduledSpec[]): `0x${string}` =>
   encodeAbiParameters(
-    parseAbiParameters("(uint8 asset, uint64 strike, uint64 closeTime, uint64 expiryTime, string question)[]"),
+    parseAbiParameters("(uint8 kind, uint64 closeTime, uint64 expiryTime, string id, string question, bytes terms)[]"),
     [specs.map((s) => ({ ...s }))],
   )
+
+/** A feed answer at `decimals`, rescaled to the 8 every strike uses. */
+const toEight = (answer: bigint, decimals: number): bigint =>
+  decimals === 8 ? answer : decimals > 8 ? answer / 10n ** BigInt(decimals - 8) : answer * 10n ** BigInt(8 - decimals)
 
 export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
   const address = runtime.config.schedulerContractAddress ?? ""
   if (address === "" || address === ZERO_ADDRESS) return "no scheduler configured"
-  const rules = runtime.config.marketSchedules ?? []
   const nowSeconds = Math.floor(runtime.now().getTime() / 1000)
 
-  const candidates = rules.flatMap((rule) => {
-    const slot = nextSlot(rule, nowSeconds)
-    return slot ? [{ rule, ...slot }] : []
+  const candidates = (runtime.config.marketSchedules ?? []).flatMap((rule) => {
+    const c = candidateFor(rule, nowSeconds)
+    return c ? [c] : []
   })
   if (candidates.length === 0) return "no slot to open"
 
@@ -2246,37 +2423,37 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
   const reads = newReadBudget()
   const atBlock = finalizedBlock(runtime, evmClient, reads)
 
-  const open = candidates.filter((c) => {
-    const [exists] = decodeFunctionResult({
-      abi: schedulerAbi,
-      functionName: "scheduled",
-      data: ethCall(
-        runtime,
-        evmClient,
-        address,
-        encodeFunctionData({
-          abi: schedulerAbi,
-          functionName: "scheduled",
-          args: [SCHEDULED_ASSET_INDEX[c.rule.asset], BigInt(c.closeTime), BigInt(c.expiryTime)],
-        }),
-        atBlock,
-        reads,
-      ),
-    }) as readonly [boolean, bigint]
-    return !exists
-  })
-  if (open.length === 0) {
+  const opened = decodeFunctionResult({
+    abi: schedulerAbi,
+    functionName: "scheduledMany",
+    data: ethCall(
+      runtime,
+      evmClient,
+      address,
+      encodeFunctionData({ abi: schedulerAbi, functionName: "scheduledMany", args: [candidates.map((c) => c.key)] }),
+      atBlock,
+      reads,
+    ),
+  }) as readonly boolean[]
+
+  const batch = candidates
+    .filter((_, i) => !opened[i])
+    .sort((a, b) => a.closeTime - b.closeTime)
+    .slice(0, SCHEDULER_SPECS_PER_REPORT)
+  if (batch.length === 0) {
     runtime.log(`Scheduler at block ${atBlock}: every slot already open`)
     return "every slot already open"
   }
 
-  // Only the assets of the markets about to be opened need a price.
-  const prices = new Map<ScheduledAsset, bigint>()
-  const priceOf = (asset: ScheduledAsset): bigint => {
-    const known = prices.get(asset)
+  // Only the feeds of the markets about to be opened are read.
+  const prices = new Map<string, bigint>()
+  const priceOf = (symbol: string): bigint => {
+    const known = prices.get(symbol)
     if (known !== undefined) return known
-    const feed = runtime.config.priceFeeds?.[asset] ?? ""
-    if (feed === "") throw new Error(`No price feed configured for ${asset}`)
+    const entry = runtime.config.priceFeeds?.[symbol]
+    const feed = typeof entry === "string" ? entry : (entry?.address ?? "")
+    const decimals = typeof entry === "string" || !entry ? 8 : entry.decimals
+    if (feed === "") throw new Error(`No price feed configured for ${symbol}`)
     const [, answer] = decodeFunctionResult({
       abi: feedAbi,
       functionName: "latestRoundData",
@@ -2289,22 +2466,13 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
         reads,
       ),
     }) as readonly [bigint, bigint, bigint, bigint, bigint]
-    if (answer <= 0n) throw new Error(`${asset} feed returned no price`)
-    prices.set(asset, answer)
-    return answer
+    if (answer <= 0n) throw new Error(`${symbol} feed returned no price`)
+    const price8 = toEight(answer, decimals)
+    prices.set(symbol, price8)
+    return price8
   }
 
-  const batch = [...open].sort((a, b) => a.closeTime - b.closeTime).slice(0, SCHEDULER_SPECS_PER_REPORT)
-  const specs: ScheduledSpec[] = batch.map((c) => {
-    const strike = roundStrike(priceOf(c.rule.asset), SCHEDULED_STRIKE_STEP[c.rule.asset])
-    return {
-      asset: SCHEDULED_ASSET_INDEX[c.rule.asset],
-      strike,
-      closeTime: BigInt(c.closeTime),
-      expiryTime: BigInt(c.expiryTime),
-      question: scheduledQuestion(c.rule.asset, strike, c.expiryTime),
-    }
-  })
+  const specs = batch.map((c) => specFor(c, c.kind === "flight" ? 0n : priceOf(c.id)))
 
   for (const s of specs) runtime.log(`Scheduler opening: ${s.question} (closes ${s.closeTime})`)
   const signedReport = runtime.report(prepareReportRequest(encodeSchedulerReport(specs))).result()
@@ -2312,7 +2480,7 @@ export const onScheduleMarkets = (runtime: Runtime<Config>): string => {
     .writeReport(runtime, {
       receiver: address,
       report: signedReport,
-      gasConfig: { gasLimit: schedulerGasLimit(specs.length) },
+      gasConfig: { gasLimit: schedulerGasLimit(batch.map((c) => c.kind)) },
     })
     .result()
 

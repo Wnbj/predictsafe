@@ -728,7 +728,7 @@ contract address in `config.staging.json` populated:
 | 6 | cron sweep, stocks |
 | 7 | cron, exchange order filler (only with `exchangeContractAddress` and `exchangeSchedule` set) |
 | 8 | cron, automatic settlement requests (only with `keeperContractAddress` and `keeperSchedule` set) |
-| 9 | cron, scheduled market opener (only with `schedulerContractAddress` and `schedulerSchedule` set) |
+| 9 | cron, scheduled market opener, all five kinds (only with `schedulerContractAddress` and `schedulerSchedule` set) |
 
 **These numbers are positions in a list built at runtime, not fixed ids.**
 `initWorkflow` pushes a handler only when its contract address is non-empty
@@ -1266,50 +1266,54 @@ off the list is silent: its markets simply go back to waiting for a click.
 
 ## Markets that open themselves (MarketScheduler)
 
-`MarketScheduler` at `0x8559a6e035bEC9F85369B9736054092ff579B01e` opens crypto
-markets from DON reports, trigger index 9 on `0 1 * * * *` (a minute past every
-hour). It exists for the same reason as the keeper: `CryptoMarket.newMarket` is
-open to anyone, but a DON report can only reach `onReport`.
+`MarketScheduler` at `0x5A3da37c424b7957F6DE67937Bc447a7Fa104B6B` opens markets
+on all five market contracts from DON reports, trigger index 9 on
+`0 1,31 * * * *`. It exists for the same reason as the keeper: every
+`newMarket` is open to anyone, but a DON report can only reach `onReport`.
 
-What to open is `marketSchedules` in the production config, one rule per
-market kind:
+A spec names its kind and carries that kind's terms ABI-encoded (the contract's
+header has the table); the contract dispatches through an external self-call,
+so a spec whose terms do not decode is skipped, not the batch. An AMM market's
+liquidity is minted from MockUSDC by the scheduler itself, which becomes the
+market's provider.
 
-| asset | horizon | staking closes | so |
-|---|---|---|---|
-| BTC | 1 hour | 15 min before | a market expiring every hour on the hour |
-| ETH | 4 hours | 1 hour before | at 00, 04, 08 … UTC |
-| BTC | 24 hours | 4 hours before | at midnight UTC |
-| ETH | 24 hours | 4 hours before | at midnight UTC |
+What to open is `marketSchedules` in the production config:
 
-For each rule the handler takes the slot ending next — or, once that slot's
-staking has closed, the one after, so a daily market follows at the next run
-instead of leaving a gap until midnight — asks `scheduled(asset, close,
-expiry)` at the finalized block, and skips slots already open. Strikes come
-from the Sepolia Data Feeds (BTC/USD `0x1b44…Ee43`, ETH/USD `0x694A…5306`, 8
-decimals) rounded to $100 / $10; the question is the same sentence the app's
-Create market form writes. At most 1 + 4 + 2 = 7 chain reads.
+| kind | id | slot | staking closes | notes |
+|---|---|---|---|---|
+| crypto | BTC | 1 h | 15 min before | |
+| crypto | ETH | 4 h | 1 h before | |
+| crypto | BTC, ETH | 24 h, midnight UTC | 4 h before | |
+| stock | XAU | 4 h | 1 h before | weekdays; maxStaleness 3 h |
+| stock | CSPX | 24 h at 20:00 UTC | 12 h before (08:00) | weekdays; maxStaleness 2 days |
+| reserve | USTB, USDW | 24 h, midnight UTC | 4 h before | maxStaleness 2 days |
+| flight | BA286 (45 min), AA100 (30 min) | tomorrow's flight | when its UTC day starts | settleAfter two days later, +6 h keeper delay |
+| amm | BTC | 24 h, midnight UTC | 4 h before | 20 mUSDC, 30 bps |
 
-The contract re-checks everything and skips, with a reason in
-`MarketScheduleSkipped`, rather than reverting: a slot already open, less than
-five minutes left to stake, expiry more than three days out, no strike, an
-empty or over-long question. Up to six specs per report in the contract; the
-workflow sends at most two, soonest-closing first, with 400k + 1M gas each.
+For each rule the handler takes the soonest slot that still has ten minutes
+to stake — skipping weekend expiries for a weekdays rule — keys it as
+`keccak256(abi.encode(kind, close, expiry, id))`, asks `scheduledMany(keys)`
+once, and sends up to two unopened slots, soonest-closing first, with
+400k + 1.1M gas each (2.2M for an AMM market, which also mints and moves its
+liquidity). Strikes come from the feeds in `priceFeeds`, normalised to 8
+decimals and rounded to `strikeStep`. At most 1 + 1 + 2 = 4 chain reads.
 
-**The first run was refused, and the reason is gas.** 21:01 UTC on 2026-10-19:
-four markets in one 1.5M-gas report, 1,459,974 gas used, and
+**Two schedulers.** The first, `0x8559…B01e` (2026-10-19), opened crypto only
+and ran unattended for a day, 28 markets. Its slots were `adopt`ed into this
+one (owner-only; it opens nothing) so none opened twice. The old contract is
+history. Adopting 28 slots cost 3.1M gas — another measure of Sepolia's
+storage pricing.
+
+**Its first run was refused, and the reason was gas.** 21:01 UTC on
+2026-10-19: four markets in one 1.5M-gas report, 1,459,974 gas used, and
 `ReportProcessed(result = false)` on the forwarder — nothing opened. One
 `newMarket` estimates at ~590k on Sepolia against ~170k in forge's local EVM.
 The execution itself reads SUCCESS in `cre execution list`: a refused report
-is only visible in the forwarder's log.
+is only visible in the forwarder's log. Fixed to two per report with gas per
+market; **proven at 21:06 UTC**: tx `0xa0de917b…`, `ReportProcessed(result =
+true)`, 1,551,850 gas for crypto #18 and #19.
 
-**Proven at 21:06 UTC the same evening**, after the fix: tx `0xa0de917b…`,
-`ReportProcessed(result = true)`, 1,551,850 gas for two markets (~775k each,
-against 2.4M asked) — crypto #18 "Will BTC be at or above $81,900 at 22:00 UTC
-on Oct 19?" and #19, ETH $2,400 at midnight. Nobody pressed anything. The
-schedule ran every three minutes for that test and is back to hourly, workflow
-ID `00dbe043…`.
-
-Roughly 32 markets a day. Most will see no stakes, settle as Void with an
+Roughly 45 markets a day. Most will see no stakes, settle as Void with an
 empty book, and drop behind the board's "test markets hidden" count. The
 keeper settles them all the same — that is the point: something is always
 open.

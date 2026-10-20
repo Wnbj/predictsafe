@@ -95,7 +95,7 @@ through **Chainlink CCIP** — see
 | sXAU / sCSPX (CCIP tokens) | `0x502640827C31ce347FBe42a5bD6e08Dc98C4a9E0` / `0x2f42A5233311B1Ee291Bfd958039A0449E1F03CD` |
 | sXAU / sCSPX on **Base Sepolia** | `0xc20BFD974F374669cAC5994D1E712F03BC102242` / `0x95f4f643654cf63171eD5a8d6751752Ba43793CA` |
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
-| MarketScheduler | `0x8559a6e035bEC9F85369B9736054092ff579B01e` |
+| MarketScheduler | `0x5A3da37c424b7957F6DE67937Bc447a7Fa104B6B` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -297,18 +297,30 @@ waiting for someone to execute it by hand.
 
 Every market used to be opened by a person, so most of the time the board
 showed only resolved ones. `MarketScheduler` lets the DON open them on a
-schedule — a BTC market every hour, ETH every four hours, a daily one for
-each. Each hour the workflow works out the slot that ends next, takes the
-strike from the asset's Chainlink Data Feed rounded to a number a person would
-type, and reports the terms; the contract opens the market through the same
-public `newMarket` the app's Create button uses. Time comes from DON time and
-the price from the finalized block, so all ten nodes name the same market.
+schedule, in every category:
+
+| category | what opens |
+|---|---|
+| Crypto | BTC every hour, ETH every four hours, a daily one for each |
+| Stocks | gold (XAU) every four hours and the S&P 500 ETF (CSPX) daily at 20:00 UTC — weekdays only, because an exchange-hours feed that does not move voids the market |
+| Reserves | USTB NAV and USDW reserves, daily |
+| Flights | tomorrow's BA286 (45 min late?) and AA100 (30 min) |
+| AMM | a daily BTC market, seeded with 20 mUSDC of liquidity the scheduler mints |
+
+Twice an hour the workflow works out, for each rule, the slot that ends next;
+asks the contract in one read which of those are already open; takes strikes
+from the right Chainlink Data Feed, rounded to a number a person would type;
+and reports up to two markets' terms. The contract opens each on its own
+contract through the same public `newMarket` a person would call. Time comes
+from DON time and prices from the finalized block, so all ten nodes name the
+same markets. A flight needs no lookup to open — only to settle.
 
 What a report may open is bounded in the contract, not the workflow: each
 slot at most once (the workflow reads a finalized block, so it can repeat
-itself), at least five minutes left to stake, expiry within three days. The
-keeper and the crypto handler then settle these markets like any other — an
-hourly market opens, closes, settles and pays without anyone touching it.
+itself), at least five minutes left to stake, expiry within four days, AMM
+liquidity under 100 mUSDC. The keeper and the log handlers then settle these
+markets like any other — they open, close, settle and pay without anyone
+touching them.
 
 ### Nobody presses the button, and the DON still cannot call it
 

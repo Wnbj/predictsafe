@@ -160,13 +160,24 @@ for key, label in (('flightContractAddress','flight'), ('cryptoContractAddress',
   echo
 fi
 
-# The scheduler opens markets on the crypto contract it was built with. One
-# pointed elsewhere opens them where no handler settles them.
+# The scheduler opens markets on the contracts it was built with. One pointed
+# elsewhere opens markets that no handler settles.
 scheduler=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('schedulerContractAddress') or '')")
 if [ -n "$scheduler" ] && [ "$scheduler" != "0x0000000000000000000000000000000000000000" ]; then
-  crypto=$(python3 -c "import json; print(json.load(open('$CONFIG')).get('cryptoContractAddress') or '')")
-  echo "  scheduler opens markets on the crypto contract"
-  check "markets" "$(cast call "$scheduler" 'markets()(address)' --rpc-url "$RPC" 2>&1)" "$crypto"
+  echo "  scheduler opens markets on the configured contracts"
+  while IFS='=' read -r getter address; do
+    [ -z "$address" ] && continue
+    check "$getter" "$(cast call "$scheduler" "$getter()(address)" --rpc-url "$RPC" 2>&1)" "$address"
+  done < <(python3 -c "
+import json
+c = json.load(open('$CONFIG'))
+for getter, key in (('crypto', 'cryptoContractAddress'), ('stock', 'stockContractAddress'),
+                    ('reserve', 'reserveContractAddress'), ('flight', 'flightContractAddress'),
+                    ('amm', 'ammContractAddress')):
+    v = c.get(key) or ''
+    if v:
+        print(f'{getter}={v}')
+")
   echo
 fi
 

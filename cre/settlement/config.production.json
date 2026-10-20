@@ -16,32 +16,118 @@
   "exchangeSchedule": "0 5,15,25,35,45,55 * * * *",
   "keeperContractAddress": "0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43",
   "keeperSchedule": "0 2,12,22,32,42,52 * * * *",
-  "schedulerContractAddress": "0x8559a6e035bEC9F85369B9736054092ff579B01e",
-  "schedulerSchedule": "0 1 * * * *",
+  "schedulerContractAddress": "0x5A3da37c424b7957F6DE67937Bc447a7Fa104B6B",
+  "schedulerSchedule": "0 1,31 * * * *",
   "marketSchedules": [
     {
+      "kind": "crypto",
       "asset": "BTC",
       "horizonSeconds": 3600,
       "closeBeforeSeconds": 900
     },
     {
+      "kind": "crypto",
       "asset": "ETH",
       "horizonSeconds": 14400,
       "closeBeforeSeconds": 3600
     },
     {
+      "kind": "crypto",
       "asset": "BTC",
       "horizonSeconds": 86400,
       "closeBeforeSeconds": 14400
     },
     {
+      "kind": "crypto",
       "asset": "ETH",
       "horizonSeconds": 86400,
       "closeBeforeSeconds": 14400
+    },
+    {
+      "kind": "stock",
+      "symbol": "XAU",
+      "label": "gold (XAU)",
+      "horizonSeconds": 14400,
+      "closeBeforeSeconds": 3600,
+      "weekdaysOnly": true,
+      "strikeStep": 10,
+      "maxStalenessSeconds": 10800
+    },
+    {
+      "kind": "stock",
+      "symbol": "CSPX",
+      "label": "the S&P 500 ETF (CSPX)",
+      "horizonSeconds": 86400,
+      "offsetSeconds": 72000,
+      "closeBeforeSeconds": 43200,
+      "weekdaysOnly": true,
+      "strikeStep": 5,
+      "maxStalenessSeconds": 172800
+    },
+    {
+      "kind": "reserve",
+      "symbol": "USTB",
+      "label": "USTB NAV per share",
+      "horizonSeconds": 86400,
+      "closeBeforeSeconds": 14400,
+      "strikeStep": 0.01,
+      "maxStalenessSeconds": 172800
+    },
+    {
+      "kind": "reserve",
+      "symbol": "USDW",
+      "label": "USDW reserves",
+      "unit": "",
+      "horizonSeconds": 86400,
+      "closeBeforeSeconds": 14400,
+      "strikeStep": 100000,
+      "maxStalenessSeconds": 172800
+    },
+    {
+      "kind": "flight",
+      "flight": "BA286",
+      "thresholdMinutes": 45,
+      "daysAhead": 1
+    },
+    {
+      "kind": "flight",
+      "flight": "AA100",
+      "thresholdMinutes": 30,
+      "daysAhead": 1
+    },
+    {
+      "kind": "amm",
+      "asset": "BTC",
+      "horizonSeconds": 86400,
+      "closeBeforeSeconds": 14400,
+      "liquidity": 20,
+      "feeBps": 30
     }
   ],
   "priceFeeds": {
-    "BTC": "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
-    "ETH": "0x694AA1769357215DE4FAC081bf1f309aDC325306"
+    "BTC": {
+      "address": "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
+      "decimals": 8
+    },
+    "ETH": {
+      "address": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+      "decimals": 8
+    },
+    "XAU": {
+      "address": "0xC5981F461d74c46eB4b0CF3f4Ec79f025573B0Ea",
+      "decimals": 8
+    },
+    "CSPX": {
+      "address": "0x4b531A318B0e44B549F3b2f824721b3D0d51930A",
+      "decimals": 8
+    },
+    "USTB": {
+      "address": "0x732d3C7515356eAB22E3F3DcA183c5c65102d518",
+      "decimals": 6
+    },
+    "USDW": {
+      "address": "0x92B42669e6B34f54dd445EF23552C61A68bda0F1",
+      "decimals": 6
+    }
   }
 }

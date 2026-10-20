@@ -35,6 +35,10 @@ import {
   SCHEDULE_MIN_STAKING_SECONDS,
   SCHEDULER_SPECS_PER_REPORT,
   schedulerGasLimit,
+  flightSlot,
+  candidateFor,
+  specFor,
+  scheduledSlotKey,
 } from "./main"
 
 /**
@@ -766,8 +770,10 @@ describe("scheduled markets", () => {
     expect(nextSlot(hourly, justInTime)?.expiryTime).toBe(Date.UTC(2026, 9, 19, 22, 0, 0) / 1000)
   })
 
-  test("a rule with no room to stake opens nothing", () => {
-    expect(nextSlot({ asset: "BTC", horizonSeconds: 600, closeBeforeSeconds: 600 }, T)).toBeNull()
+  test("a rule whose staking always closes before it could open opens nothing", () => {
+    // Closing five days before expiry, against a contract that refuses expiries
+    // more than four days out: no slot can ever have time left to stake.
+    expect(nextSlot({ asset: "BTC", horizonSeconds: 3600, closeBeforeSeconds: 5 * 86400 }, T)).toBeNull()
   })
 
   test("strikes round to the nearest step a person would type", () => {
@@ -785,24 +791,90 @@ describe("scheduled markets", () => {
     )
   })
 
-  test("asks for gas Sepolia actually charges: ~590k per newMarket, measured", () => {
+  test("asks for gas Sepolia actually charges: ~590k per newMarket, more for an AMM", () => {
     expect(SCHEDULER_SPECS_PER_REPORT).toBeLessThanOrEqual(2)
-    expect(Number(schedulerGasLimit(1))).toBeGreaterThanOrEqual(1_000_000)
-    expect(Number(schedulerGasLimit(SCHEDULER_SPECS_PER_REPORT))).toBeGreaterThanOrEqual(
-      SCHEDULER_SPECS_PER_REPORT * 590_000 * 1.5,
+    expect(Number(schedulerGasLimit(["crypto"]))).toBeGreaterThanOrEqual(590_000 * 1.5 + 400_000)
+    expect(Number(schedulerGasLimit(["amm"]))).toBeGreaterThan(Number(schedulerGasLimit(["crypto"])))
+    expect(Number(schedulerGasLimit(["amm", "crypto"]))).toBe(400_000 + 2_200_000 + 1_100_000)
+  })
+
+  // Tue 2026-10-20 17:31 UTC.
+  const TUE = Date.UTC(2026, 9, 20, 17, 31, 0) / 1000
+  const FRI_EVE = Date.UTC(2026, 9, 23, 21, 0, 0) / 1000
+
+  test("an offset puts a daily slot at a time of day, here 20:00 UTC", () => {
+    const cspx = { kind: "stock" as const, symbol: "CSPX", horizonSeconds: 86400, offsetSeconds: 72000, closeBeforeSeconds: 43200 }
+    // 17:31 is after today's 08:00 close, so tomorrow's 20:00.
+    expect(nextSlot(cspx, TUE)).toEqual({
+      expiryTime: Date.UTC(2026, 9, 21, 20, 0, 0) / 1000,
+      closeTime: Date.UTC(2026, 9, 21, 8, 0, 0) / 1000,
+    })
+  })
+
+  test("a weekdays-only rule skips a weekend expiry", () => {
+    const xau = { kind: "stock" as const, symbol: "XAU", horizonSeconds: 14400, closeBeforeSeconds: 3600, weekdaysOnly: true }
+    // Friday 21:00: Sat and Sun slots are skipped; Monday 00:00 is the first.
+    expect(nextSlot(xau, FRI_EVE)?.expiryTime).toBe(Date.UTC(2026, 9, 26, 0, 0, 0) / 1000)
+  })
+
+  test("a flight is tomorrow's, closing when that day starts, settleable two days later", () => {
+    expect(flightSlot({ kind: "flight", flight: "BA286", daysAhead: 1 }, TUE)).toEqual({
+      closeTime: Date.UTC(2026, 9, 21) / 1000,
+      expiryTime: Date.UTC(2026, 9, 23) / 1000,
+      departureDate: 20261021,
+    })
+  })
+
+  test("each kind's question reads like the app's", () => {
+    const at = (rule: Parameters<typeof candidateFor>[0], price: bigint) => specFor(candidateFor(rule, TUE)!, price).question
+    expect(at({ kind: "stock", symbol: "XAU", label: "gold (XAU)", horizonSeconds: 14400, closeBeforeSeconds: 3600, strikeStep: 10 }, 412_164_000_000n))
+      .toBe("Will gold (XAU) be at or above $4,120 at 20:00 UTC on Oct 20?")
+    expect(at({ kind: "reserve", symbol: "USTB", label: "USTB NAV per share", horizonSeconds: 86400, closeBeforeSeconds: 14400, strikeStep: 0.01 }, 1_125_104_100n))
+      .toBe("Will USTB NAV per share be at or above $11.25 at 00:00 UTC on Oct 21?")
+    expect(at({ kind: "reserve", symbol: "USDW", label: "USDW reserves", unit: "", horizonSeconds: 86400, closeBeforeSeconds: 14400, strikeStep: 100000 }, 4_928_569_806_000_000n))
+      .toBe("Will USDW reserves be at or above 49,300,000 at 00:00 UTC on Oct 21?")
+    expect(at({ kind: "flight", flight: "BA286", thresholdMinutes: 45, daysAhead: 1 }, 0n)).toBe(
+      "Will BA286 on Oct 21 arrive 45m+ late?",
+    )
+    expect(at({ kind: "amm", asset: "BTC", horizonSeconds: 86400, closeBeforeSeconds: 14400 }, 8_194_741_000_000n)).toBe(
+      "Will BTC be at or above $81,900 at 00:00 UTC on Oct 21?",
+    )
+  })
+
+  test("terms are encoded the way MarketScheduler.openOne decodes each kind", () => {
+    const flight = specFor(candidateFor({ kind: "flight", flight: "AA100", thresholdMinutes: 30 }, TUE)!, 0n)
+    expect(flight.kind).toBe(3)
+    expect(decodeAbiParameters(parseAbiParameters("uint32, uint16"), flight.terms)).toEqual([20261021, 30])
+
+    const amm = specFor(candidateFor({ kind: "amm", asset: "BTC", horizonSeconds: 86400, closeBeforeSeconds: 14400, liquidity: 20 }, TUE)!, 8_194_741_000_000n)
+    expect(amm.kind).toBe(4)
+    expect(decodeAbiParameters(parseAbiParameters("uint8, uint64, uint256, uint256, uint16"), amm.terms)).toEqual([
+      0, 8_190_000_000_000n, 20_000_000n, 5_000n, 30,
+    ])
+
+    const stock = specFor(candidateFor({ kind: "stock", symbol: "XAU", horizonSeconds: 14400, closeBeforeSeconds: 3600, strikeStep: 10, maxStalenessSeconds: 10800 }, TUE)!, 412_164_000_000n)
+    expect(stock.id).toBe("XAU")
+    expect(decodeAbiParameters(parseAbiParameters("uint64, uint32"), stock.terms)).toEqual([412_000_000_000n, 10800])
+  })
+
+  test("a slot key is the contract's keccak256(abi.encode(kind, close, expiry, id))", () => {
+    // Computed with `cast keccak $(cast abi-encode "f(uint8,uint64,uint64,string)" 0 1792446300 1792447200 BTC)`.
+    expect(scheduledSlotKey(0, 1792446300, 1792447200, "BTC")).toBe(
+      "0x1f18baa90e950d538113ed4507fcb8ab31e88726020ee4af0a1dfa2433119d1e",
     )
   })
 
   test("encodes the specs exactly as MarketScheduler decodes them", () => {
     const spec = {
-      asset: 0,
-      strike: 8_190_000_000_000n,
+      kind: 0,
       closeTime: 1_792_446_300n,
       expiryTime: 1_792_447_200n,
+      id: "BTC",
       question: "Will BTC be at or above $81,900 at 22:00 UTC on Oct 19?",
+      terms: "0x1234" as `0x${string}`,
     }
     const [decoded] = decodeAbiParameters(
-      parseAbiParameters("(uint8 asset, uint64 strike, uint64 closeTime, uint64 expiryTime, string question)[]"),
+      parseAbiParameters("(uint8 kind, uint64 closeTime, uint64 expiryTime, string id, string question, bytes terms)[]"),
       encodeSchedulerReport([spec]),
     )
     expect(decoded).toEqual([spec])
