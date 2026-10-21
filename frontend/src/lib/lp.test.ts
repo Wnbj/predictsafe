@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeFees, buildLpPosition, depositScenarios, lpPnl, lpScenarios, markPoolValue, markShares, residualValue, residualsByMarket } from "./lp";
+import { attributeFees, buildLpPosition, buyAgainstPool, depositScenarios, depositThenTrade, feesOn, lpPnl, lpScenarios, markPoolValue, markShares, residualValue, residualsByMarket } from "./lp";
 import { MarketStatus, Outcome, type LpEvent, type Market, type TradeEvent } from "./types";
 import { amm0 } from "./fixtures";
 
@@ -333,5 +333,41 @@ describe("liquidity scenarios", () => {
   it("previews a deposit from the contract's quote the same way", () => {
     const s = depositScenarios(market, 10_000_000n, { lpShares: 2_207_222n, yesResidual: 0n, noResidual: 9_569_380n });
     for (const v of [s.ifYes, s.ifNo]) expect(v > 9_900_000n && v < 10_100_000n).toBe(true);
+  });
+});
+
+describe("what a trade does to a provider", () => {
+  it("ports the contract's buy: every unit in is accounted for, and the product never shrinks", () => {
+    const y = 100_000_000n;
+    const n = 60_000_000n;
+    for (const isYes of [true, false]) {
+      const b = buyAgainstPool(y, n, 10_000_000n, 30, isYes);
+      expect(b.fee).toBe(30_000n);
+      if (isYes) {
+        expect(b.yesAfter + b.sharesOut).toBe(y + 10_000_000n);
+        expect(b.noAfter).toBe(n + 10_000_000n);
+      } else {
+        expect(b.noAfter + b.sharesOut).toBe(n + 10_000_000n);
+        expect(b.yesAfter).toBe(y + 10_000_000n);
+      }
+      expect(b.yesAfter * b.noAfter >= y * n).toBe(true);
+    }
+  });
+
+  it("a buy of Yes leaves the provider down if Yes wins and up if No wins", () => {
+    const m = { ...amm0, yesReserve: 20_000_000n, noReserve: 20_000_000n, totalLpShares: 20_000_000n, feeBps: 30 } as Market;
+    const amount = 100_000_000n;
+    const quote = { lpShares: 100_000_000n, yesResidual: 0n, noResidual: 0n };
+    const s = depositThenTrade(m, amount, quote, 50_000_000n, true);
+    expect(s.ifYes < amount).toBe(true);
+    expect(s.ifNo > amount).toBe(true);
+    // The buyer's 50 is split between what the pool owes them and what the
+    // providers keep; across both outcomes the provider is never down by more
+    // than the buyer could win.
+    expect(amount - s.ifYes < 50_000_000n * 2n).toBe(true);
+  });
+
+  it("fees are the provider's share of the pool's cut", () => {
+    expect(feesOn(1_000_000_000n, 30, 8_333n)).toBe(2_499_900n); // ~2.50 per 1,000 at 83.33%
   });
 });

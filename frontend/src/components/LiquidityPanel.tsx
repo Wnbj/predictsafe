@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Address } from "viem";
 import { txLabel } from "../lib/toasts";
-import { TOKEN_SYMBOL, txUrl } from "../lib/config";
+import { TOKEN_DECIMALS, TOKEN_SYMBOL, txUrl } from "../lib/config";
 import { formatToken, formatSigned, parseToken } from "../lib/format";
 import {
   quoteAmmAddLiquidity,
@@ -10,9 +10,9 @@ import {
   ammAddLiquidityCall,
 } from "../lib/chain";
 import { writeWithApproval } from "../lib/approval";
-import { depositScenarios, lpPnl, lpScenarios, residualValue } from "../lib/lp";
+import { depositScenarios, depositThenTrade, feesOn, lpPnl, lpScenarios, residualValue } from "../lib/lp";
 import { outcomeLabel as sportsOutcomeLabel } from "../lib/sports";
-import { MarketStatus, type Market, type Position, isAmm } from "../lib/types";
+import { MarketStatus, type Market, type Position, type TradeEvent, isAmm } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
 type Busy = null | "approving" | "adding" | "withdrawing";
@@ -32,6 +32,7 @@ export function LiquidityPanel({
   allowance,
   position,
   now,
+  trades,
   onDone,
 }: {
   market: Market;
@@ -40,6 +41,8 @@ export function LiquidityPanel({
   allowance: bigint;
   position: Position | undefined;
   now: number;
+  /** This market's trades, for the volume a depositor would be earning fees on. */
+  trades: TradeEvent[];
   onDone: () => void;
 }) {
   const [amountText, setAmountText] = useState("10");
@@ -162,6 +165,23 @@ export function LiquidityPanel({
       )
     : null;
   const preview = quote && amount ? depositScenarios(market, amount, quote) : null;
+  /*
+   * The two halves of the role, in numbers, before anyone deposits: what the
+   * fees pay on volume, and what one trade against the pool does — the
+   * scenarios alone read "+0" both ways, which is true at the moment of
+   * deposit and says nothing about where a result would come from.
+   */
+  const quoteShareBps =
+    quote && market.totalLpShares + quote.lpShares > 0n
+      ? (quote.lpShares * 10_000n) / (market.totalLpShares + quote.lpShares)
+      : 0n;
+  const one = 10n ** BigInt(TOKEN_DECIMALS);
+  const feePerThousand = isAmm(market) ? feesOn(1_000n * one, market.feeBps, quoteShareBps) : 0n;
+  const volume = trades.reduce((sum, t) => sum + (t.amm ? t.amount : 0n), 0n);
+  const tradeCount = trades.filter((t) => t.amm).length;
+  const exampleTrade = amount ? ((amount / 2n / one) > 0n ? (amount / 2n / one) * one : one) : 0n;
+  const afterTrade =
+    quote && amount && amount > 0n ? depositThenTrade(market, amount, quote, exampleTrade, true) : null;
   // Folded until asked for, unless this wallet already provides here.
   const expanded = showAdvanced ?? Boolean(lp);
 
@@ -259,13 +279,49 @@ export function LiquidityPanel({
                     </dd>
                   </div>
                 )}
-                {preview && amount !== null && amount > 0n && (
-                  <>
-                    <Scenario label={yesLabel} value={preview.ifYes} against={amount} />
-                    <Scenario label={noLabel} value={preview.ifNo} against={amount} />
-                  </>
+                {quote && (
+                  <div>
+                    <dt>Your cut of the fees</dt>
+                    <dd>
+                      ~{formatToken(feePerThousand)} <span className="muted">per 1,000 {TOKEN_SYMBOL} traded</span>
+                    </dd>
+                  </div>
+                )}
+                {quote && (
+                  <div>
+                    <dt>Traded here so far</dt>
+                    <dd>
+                      {tradeCount === 0 ? "nothing yet" : `${tradeCount} trade${tradeCount === 1 ? "" : "s"} · ${formatToken(volume)}`}
+                    </dd>
+                  </div>
                 )}
               </dl>
+
+              {preview && amount !== null && amount > 0n && (
+                <>
+                  <div className="lp-subhead">If it settled right now, with no more trades</div>
+                  <dl className="bridge-facts">
+                    <Scenario label={yesLabel} value={preview.ifYes} against={amount} />
+                    <Scenario label={noLabel} value={preview.ifNo} against={amount} />
+                  </dl>
+                </>
+              )}
+              {afterTrade && amount !== null && amount > 0n && (
+                <>
+                  <div className="lp-subhead">
+                    The risk: if someone then buys {formatToken(exampleTrade)} of {market.categoryId === "sports" ? sportsOutcomeLabel(market) : "Yes"}
+                  </div>
+                  <dl className="bridge-facts">
+                    <Scenario label={yesLabel} value={afterTrade.ifYes} against={amount} />
+                    <Scenario label={noLabel} value={afterTrade.ifNo} against={amount} />
+                  </dl>
+                  <p className="muted-strong" style={{ fontSize: 11, margin: 0 }}>
+                    The pool sold them those shares. If they turn out right, the pool pays them out and you, as part
+                    of the pool, are down; if they are wrong, their money stays in the pool and you are up. Fees
+                    come in either way.
+                  </p>
+                </>
+              )}
 
               <button
                 className="btn btn-accent bridge-submit"

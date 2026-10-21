@@ -287,3 +287,61 @@ export function depositScenarios(
   } as Market;
   return lpScenarios(after, quote.lpShares, m.totalLpShares + quote.lpShares, quote.yesResidual, quote.noResidual);
 }
+
+const ceilDiv = (a: bigint, b: bigint): bigint => (a === 0n ? 0n : (a - 1n) / b + 1n);
+
+/**
+ * A buy against the pool, exactly as `AmmMarket._buyShares` does it — the
+ * fee off the swapped amount, ceiling division so rounding favours the pool,
+ * the fee left in both reserves. Used only to SHOW what a trade would do to a
+ * provider; anything that is sent is quoted by the contract itself.
+ */
+export function buyAgainstPool(
+  y: bigint,
+  n: bigint,
+  collateralIn: bigint,
+  feeBps: number,
+  isYes: boolean,
+): { sharesOut: bigint; fee: bigint; yesAfter: bigint; noAfter: bigint } {
+  const fee = ceilDiv(collateralIn * BigInt(feeBps), 10_000n);
+  const net = collateralIn - fee;
+  const k = y * n;
+  if (isYes) {
+    const remaining = ceilDiv(k, n + net);
+    return { sharesOut: y + net - remaining, fee, yesAfter: remaining + fee, noAfter: n + net + fee };
+  }
+  const remaining = ceilDiv(k, y + net);
+  return { sharesOut: n + net - remaining, fee, yesAfter: y + net + fee, noAfter: remaining + fee };
+}
+
+/**
+ * Where a provider's risk comes from, as a number: deposit `amount`, then
+ * someone buys `trade` of one side. The pool hands that buyer shares of the
+ * side they bought, so if that side wins the pool is left holding the loser —
+ * and the provider, who owns a slice of the pool, is down; if it loses, the
+ * provider is up by what the buyer paid. The fee is in both.
+ */
+export function depositThenTrade(
+  m: Market,
+  amount: bigint,
+  quote: { lpShares: bigint; yesResidual: bigint; noResidual: bigint },
+  trade: bigint,
+  isYes: boolean,
+): LpScenarios {
+  if (!isAmm(m) || quote.lpShares === 0n) return { ifYes: 0n, ifNo: 0n, ifVoid: 0n };
+  const y = m.yesReserve + amount - quote.yesResidual;
+  const n = m.noReserve + amount - quote.noResidual;
+  const after = buyAgainstPool(y, n, trade, m.feeBps, isYes);
+  return lpScenarios(
+    { ...m, yesReserve: after.yesAfter, noReserve: after.noAfter } as Market,
+    quote.lpShares,
+    m.totalLpShares + quote.lpShares,
+    quote.yesResidual,
+    quote.noResidual,
+  );
+}
+
+/** A provider's cut of the fees on `volume` traded, at `shareBps` of the pool. */
+export function feesOn(volume: bigint, feeBps: number, shareBps: bigint): bigint {
+  return (((volume * BigInt(feeBps)) / 10_000n) * shareBps) / 10_000n;
+}

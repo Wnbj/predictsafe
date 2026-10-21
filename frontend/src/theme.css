@@ -356,7 +356,9 @@ input:focus {
     --page-x: 32px;
   }
   .detail-grid {
-    grid-template-columns: 1fr;
+    /* minmax(0, …): a bare 1fr cannot shrink below its widest content, and
+       the liquidity panel's rows pushed the column past a phone's width. */
+    grid-template-columns: minmax(0, 1fr);
   }
   /* Two rules, not one: sharing a selector here zeroed the PANEL's padding
      too, and below 1100px every card's contents ran into its border. */
@@ -1984,8 +1986,11 @@ input:focus {
   color: var(--color-neutral-300);
   margin-top: 2px;
 }
-
-/* ---- the confidential off-chain backing row ------------------------------ */
+.lp-subhead {
+  font-size: 12px;
+  color: var(--color-neutral-400);
+  margin: 4px 0 -4px;
+}
 
 /* --- Proof of reserve: the confidential workflow's answer, given room --- */
 .proof {

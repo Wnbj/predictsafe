@@ -586,6 +586,7 @@ export function Detail({
             allowance={allowances.get(market.contract) ?? 0n}
             position={position}
             now={now}
+            trades={marketStakes}
             onDone={onRefresh}
           />
         </div>
