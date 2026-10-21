@@ -307,9 +307,16 @@ Workflow**: its handler runs inside a TEE. It reads what the tokens are worth
 from both chains on the DON (public anyway), then — inside the enclave —
 unseals the custodian's API key from the Vault DON, fetches the account, and
 compares. Only a coverage band crosses back and goes on chain: below 100%,
-≥100%, ≥150%, ≥200%, ≥300%, ≥400%, ≥500%. An exact ratio would leak the balance, because the
-obligations it is divided by are public. The Trade page shows the band under
-the reserve.
+≥100%, ≥150%, ≥200%, ≥300%, ≥400%, ≥500%. An exact ratio would leak the
+balance, because the obligations it is divided by are public. The Trade page
+shows it in its own section under the reserve: the band, a seven-step meter,
+and a 24-hour grid where a run the DON missed shows as a gap.
+
+**Live on the DON, hourly, since 2026-10-20.** The first real run was refused
+for gas (the report fits, the forwarder's ten signature checks nearly do
+not); raised to 1.2M, the next hour landed — 23:45:36 UTC, band ≥200% against
+482.03 mUSDC of tokens. Since 2026-10-21 the receiver takes seven bands and
+reads ≥500%. The balance has appeared nowhere: not on chain, not in a log.
 
 What is not confidential, said plainly: the workflow's code (the DON hands the
 binary to the enclave) and anything it logs. The custodian here is a demo API
@@ -341,6 +348,12 @@ AMM market does. A suspended one waits — they are often resumed the same day
 Consensus is on a digest of the response — each match reduced to its id,
 kickoff, status, teams and ninety-minute score, sorted — because the raw body
 carries `lastUpdated` stamps that differ between nodes asking a second apart.
+
+**Proven end to end on 2026-10-21.** The DON opened Como 1907 v Man United and
+Lille v Galatasaray the day before; at 19:02 UTC, one report settled both —
+a home win and an away win, six markets — through the production forwarder
+(tx `0x10ee592e…`, 1,846,282 gas), and the same run's successor opened the
+next fixture. Nobody pressed anything.
 
 ### The board opens itself
 
@@ -404,11 +417,14 @@ export PATH="$HOME/.cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
 ```
 
 ```bash
-cd contracts && forge test                     # 206 tests
-cd frontend  && bun install && bun run test    # 181 tests
+cd contracts && forge test                     # 257 tests
+cd frontend  && bun install && bun run test    # 251 tests
+cd frontend  && bun run lint                   # ESLint, clean
 cd frontend  && bun run dev                    # the app, against live Sepolia
 cd frontend  && bun run snapshot               # refresh shipped chain history
-cd cre/settlement && bun test                  # 62 tests
+cd cre/settlement && bun test                  # 90 tests
+cd cre/reserve-attestation && bun test         # 8 tests
+cd cre && ./health.sh                          # is the live system healthy?
 ```
 
 The app needs an RPC that serves `eth_getLogs` over a 10,000-block range. The
@@ -457,9 +473,12 @@ have them.
 - **An exchange order can wait a long time.** It fills at the next new price:
   within about an hour for gold on a weekday, about a day for the S&P 500, and
   not at all over a weekend. That is the price of never trading at a known one.
-- **`ownerVoid` exists on every market.** An escape hatch for a POC, and it
-  emits no event, which the live view has to account for separately. It should
-  not survive into anything real.
+- **`ownerVoid` exists on the parimutuel and flight markets** (AMM and football
+  have an owner-only void through the report path instead — RUNBOOK). An
+  escape hatch for a POC: it emits no event, which the live view has to account
+  for separately, and it does not check the market is unsettled — voiding a
+  SETTLED market would refund losers out of other markets' money, so RUNBOOK
+  makes the check a rule. It should not survive into anything real.
 - Not audited. Not for real money.
 
 ---

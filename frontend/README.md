@@ -8,6 +8,7 @@ seeded or placeholder data. The project overview is in the
 bun install
 bun run dev        # http://localhost:5173
 bun run test       # vitest
+bun run lint       # ESLint (recommended + React hook rules)
 bun run build      # typecheck + production build
 bun run snapshot   # refresh public/logs-snapshot.json before a demo
 ```
@@ -20,7 +21,7 @@ Sepolia. Reads work without one.
 | route | view | what it shows |
 |---|---|---|
 | `/` | Landing | stats, categories, most-backed markets |
-| `/markets` | Markets | every market, filterable by category; untouched test markets hidden behind a count |
+| `/markets` | Markets | every market, filterable by category and Active / Resolved; counts are in cards (a match or a ladder is one); a resolved card states the result — winner, or outcome and what the oracle observed — never the odds it closed at; untouched test markets hidden behind a count |
 | `/markets/:category/:id` | Detail | odds, price chart, strike ladder, stake / buy / sell, settlement evidence |
 | `/portfolio` | Portfolio | the wallet (mUSDC and tokens on both chains, buy / sell and CCIP transfer dialogs, activity), then market positions with claim / redeem / withdraw |
 | `/trade` | Trade | the synthetic gold and S&P 500 ETF exchange: assets, the order form (shared with the wallet's dialog), orders, reserve |
@@ -28,7 +29,15 @@ Sepolia. Reads work without one.
 | `/live` | Live | settlements arriving from the DON, read from logs every six seconds |
 
 Trade and Portfolio render outside the markets loading gate: neither waits for
-every market to load before showing what it can.
+every market to load before showing what it can. Trade, Portfolio, Live and
+Leaderboard load on demand (`lazy` in `App.tsx`).
+
+**The board re-reads the chain every two minutes** while the tab is visible,
+and at once when it becomes visible again (`useChainData`); reads never
+overlap, so a refresh a transaction asks for cannot be overtaken by an older
+one. **Every time is shown in Bulgarian time** (`Europe/Sofia`, `lib/format.ts`):
+timestamps are formatted there, and questions — which name their moment in
+UTC on chain — are rewritten at the read boundary (`localTimes`).
 
 ## Configuration
 

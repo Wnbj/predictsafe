@@ -38,10 +38,22 @@ actually happened.
 
 ```bash
 cd frontend && bun run snapshot                      # refresh shipped history
-cd cre && ./preflight.sh production                  # every row green
-cre execution list predictsafe-settlement --status FAILURE   # expect none
+cd cre && ./preflight.sh production                  # wiring: every row green
+cd cre && ./health.sh                                # behaviour: "Healthy."
 cd frontend && bun run build                         # ships public/ too
 ```
+
+**`health.sh` is the one to read when something looks off.** Read-only, about
+a minute: failed executions per workflow; reports each receiver accepted and
+REFUSED (`ReportProcessed(result=false)` — the execution still reads SUCCESS);
+what the keeper considers due and markets stuck waiting for a report; when the
+confidential attestation last landed and its band; matches finished but not
+settled; exchange orders waiting. `./health.sh 2` looks at the last two hours.
+A WARN on failed executions is usually the platform's own RPC — "no healthy
+upstream" or "context canceled" on all ten nodes — and the next run catches up;
+a FAIL means a receiver refused something, or the attestation is late or below
+100%. It found nothing on 2026-10-21 that had not been noticed by hand — the
+point is that it no longer has to be.
 
 **Then open something to trade.** Every market eventually resolves, and a
 board with nothing active has nothing to show. Markets → *+ Create market*
@@ -122,7 +134,19 @@ app is sized for one person on it; several at once will see 429s and slow
 loads. Anyone can also spend the quota through `/api/rpc` — the same exposure a
 shipped key would have had, minus the key.
 
-A push to `main` redeploys. Before a demo: `bun run snapshot`, commit, push.
+A push to `main` redeploys — usually within two minutes, but on 2026-10-21
+three pushes took 5–30 minutes to appear as deployments at all, and looked like
+the GitHub link had broken. Check before assuming: `gh api
+"repos/Wnbj/predictsafe/deployments?per_page=3"` lists what Vercel has picked
+up, and the dashboard's Redeploy builds the current `main` at once. Before a
+demo: `bun run snapshot`, commit, push, and look at the live page.
+
+**Vercel's bot protection** began answering non-browser requests to `/` with a
+"Vercel Security Checkpoint" (HTTP 403) the same day, after a lot of polling
+from one machine. Browsers pass it; `/api/rpc` and `/api/custodian` were not
+challenged. If a firewall rule or Attack Challenge Mode ever covers `/api/*`,
+the DON's hourly call to `/api/custodian` fails and the attestation stops —
+`health.sh` shows it as late. Keep `/api/custodian` out of any challenge.
 
 ## Toolchain
 
@@ -1412,6 +1436,16 @@ fresh storage. Raised to 7M per match (workflow `0057d6e8…`); **proven at
 — match #0, Como 1907 v Man United (CL, 21 Oct 16:45 UTC), markets 0–2 opening
 at 45 / 27 / 28%.
 
+**Settlement proven 2026-10-21 19:02 UTC**, the first :01 run after both
+16:45 kick-offs became settleable at 18:45: one report, tx `0x10ee592e…`,
+1,846,282 gas against a 3.4M limit (400k + 1.5M per result), settled Como 1907
+v Man United (1 — home win) and Lille v Galatasaray (3 — away win), six
+markets in all, `MatchSettled` for each. The app's resolved cards name the
+winner; `/live` lists the six as "settled by the DON directly, no request"
+— a match has no request step. The next run opened Ipswich Town v Nottingham.
+A SUSPENDED match now waits like one in play (since `00e98d83…`) instead of
+voiding at once: they are often resumed the same day.
+
 **Measured quirks:**
 
 - With `competitions=PL,CL`, the free plan returns a not-yet-started match's
@@ -1628,6 +1662,29 @@ slippage bound, so a fee computed even one rounding step differently shows up as
 trades that fail for no visible reason — or gets absorbed silently inside the
 bound and never noticed.
 
+### `ownerVoid` (parimutuel and flight markets): never on a settled market
+
+`ownerVoid(id)` on CryptoMarket, StockMarket, ReserveMarket and FlightMarket
+sets the status to Void and checks NOTHING — not even that the market is
+still unsettled. On a market that already SETTLED that is a loss of other
+people's money: winners who claimed have been paid the whole pot, the void
+then lets every loser claim their stake back too, and the contract pays them
+out of the balance it holds for **every other market**. Owner-only, so it takes
+a mistake — but a redeploy is the only fix in the contract, so the guard is
+here instead. Before calling it, read the status and refuse unless it is 0
+(Open), 1 (Locked) or 2 (SettlementRequested):
+
+```bash
+# parimutuel: status is the 4th field of core(id); flight: the 7th of markets(id)
+cast call $MARKET 'core(uint256)(string,uint64,uint64,uint8,uint8,bytes32,int256,uint256,uint256)' $ID --rpc-url $RPC | sed -n 4p
+cast call $FLIGHT 'markets(uint256)(string,string,uint32,uint16,uint64,uint64,uint8,uint8,bytes32,int32,uint256,uint256)' $ID --rpc-url $RPC | sed -n 7p
+# 3 (Settled) or 4 (Void): STOP. Anything else: ownerVoid is safe.
+```
+
+`OwnerVoid.s.sol` below (AMM and football) needs no such check: it goes
+through the report path, and both contracts refuse a report for a market that
+is already settled.
+
 ### When the DON will not settle: the owner voids
 
 `AmmMarket` and `SportsMarket` have no `ownerVoid` (the parimutuel contracts
@@ -1770,9 +1827,10 @@ there is no event title on chain.
 
 | suite | count | command |
 |---|---|---|
-| contracts | 206 | `cd contracts && forge test` |
-| frontend | 181 | `cd frontend && bun run test` |
-| workflow | 62 | `cd cre/settlement && bun test` |
+| contracts | 257 | `cd contracts && forge test` |
+| frontend | 251 | `cd frontend && bun run test` (and `bun run lint`) |
+| settlement workflow | 90 | `cd cre/settlement && bun test` |
+| confidential workflow | 8 | `cd cre/reserve-attestation && bun test` |
 
 The frontend and workflow suites were added after a routing bug reached a
 user: writes branched on `categoryId` with the flight contract as the else, so

@@ -13,8 +13,9 @@ template with `cre init`.
 
 **Why a band, not a percentage.** The obligations are public, so an exact
 coverage ratio would give the balance away. The report says only below 100%,
-≥100%, ≥150% or ≥200%, plus `keccak256(apiKey ‖ response)` as evidence an
-auditor holding the key can recompute and no one else can brute-force.
+≥100%, ≥150%, ≥200%, ≥300%, ≥400% or ≥500%, plus `keccak256(apiKey ‖ response)`
+as evidence an auditor holding the key can recompute and no one else can
+brute-force. Past 500% it says nothing more about how large the balance is.
 
 **What is NOT confidential:** this code. The binary is handed to the enclave by
 the DON; the enclave protects the data the code computes over. And anything
@@ -32,5 +33,9 @@ bun test
 cre workflow simulate ./reserve-attestation --target staging-settings --non-interactive --trigger-index 0
 ```
 
-Receiver: `ReserveAttestation` `0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB`
-(Sepolia), expecting workflow `predictsafe-reserve`. RUNBOOK has the deploy.
+Receiver: `ReserveAttestation` `0x9e7F6886B01eA9b0E5E9AF8CFF3fc25596718ED0`
+(Sepolia, seven bands, since 2026-10-21), expecting workflow
+`predictsafe-reserve`; the first receiver, `0xC1C2…5DdB`, stopped at ≥200% and
+keeps its fifteen attestations. Reports carry a 1.2M gas limit — the first real
+one ran out at 700k (RUNBOOK, "Off-chain backing"). Live on the DON since
+2026-10-20, hourly at :45; `cre/health.sh` shows when it last landed.
