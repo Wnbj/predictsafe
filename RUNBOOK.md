@@ -1292,7 +1292,7 @@ expiry rather than by id. To check nothing has slipped out:
 ```bash
 # any crypto market past settleAfter that nobody asked to settle (status 0 or 1)
 for i in $(seq $(( $(cast call $CRYPTO 'marketCount()(uint256)' --rpc-url $RPC) - 1 )) -1 0); do
-  cast call $CRYPTO 'core(uint256)(string,uint64,uint64,uint8,uint8,bytes32,int256,uint256,uint256)' $i --rpc-url $RPC | sed -n '3p;4p' | paste -sd' ' | awk -v id=$i -v now=$(date +%s) '$1<now && ($3==0||$3==1){print "overdue", id}'
+  cast call $CRYPTO 'core(uint256)(string,uint64,uint64,uint8,uint8,bytes32,int256,uint256,uint256)' $i --rpc-url $RPC | sed -n '3p;4p' | paste -sd' ' - | awk -v id=$i -v now=$(date +%s) '$1<now && ($3==0||$3==1){print "overdue", id}'
 done
 ```
 
