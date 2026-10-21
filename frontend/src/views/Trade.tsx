@@ -105,12 +105,11 @@ export function Trade({ wallet, onBalanceChange }: { wallet: WalletState; onBala
             )}
           </section>
 
-          <OffChainBacking />
-
           <HowItWorks />
 
           {state && <Orders state={state} account={account} now={now} onDone={refresh} />}
           {state && <Reserve state={state} />}
+          <OffChainBacking />
         </div>
 
         <aside className="wallet trade-side" id="order-form" aria-label="Place an order">
@@ -506,8 +505,8 @@ function Reserve({ state }: { state: ExchangeState }) {
  * reaches the chain, and this page, is a band; the balance stays in the
  * enclave, and no one running a node ever sees it.
  *
- * Its own section, high on the page: it is the claim the whole tokenized
- * side rests on, and it used to sit as a footnote under the reserve.
+ * Its own section, last on the page, right under the on-chain reserve it
+ * complements; it used to be a footnote inside that card.
  */
 function OffChainBacking() {
   const att = useReserveAttestation();
