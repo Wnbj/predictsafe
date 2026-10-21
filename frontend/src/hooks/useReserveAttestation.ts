@@ -76,24 +76,26 @@ export function useReserveAttestation(): ReserveAttestation | null | undefined {
           allowFailure: false,
         });
         if (!live) return;
-        if (Number(count) !== seenCount && count > 0n) {
-          // A failed history read leaves the strip as it was; the band above it still shows.
-          history = await readHistory().catch(() => history);
-          seenCount = Number(count);
-          if (!live) return;
+        if (count === 0n) {
+          setState(null);
+          return;
         }
-        setState(
-          count === 0n
-            ? null
-            : {
-                band: Number(latest.band),
-                obligations: latest.obligations,
-                balanceAsOf: Number(latest.balanceAsOf),
-                attestedAt: Number(latest.attestedAt),
-                count: Number(count),
-                history,
-              },
-        );
+        const current = {
+          band: Number(latest.band),
+          obligations: latest.obligations,
+          balanceAsOf: Number(latest.balanceAsOf),
+          attestedAt: Number(latest.attestedAt),
+          count: Number(count),
+        };
+        // The band first, then the strip: the history is one more, slower
+        // request, and the band must not wait for it.
+        setState({ ...current, history });
+        if (Number(count) !== seenCount) {
+          seenCount = Number(count);
+          // A failed history read leaves the strip as it was.
+          history = await readHistory().catch(() => history);
+          if (live) setState({ ...current, history });
+        }
       } catch {
         if (live) setState((s) => (s === undefined ? null : s));
       }
