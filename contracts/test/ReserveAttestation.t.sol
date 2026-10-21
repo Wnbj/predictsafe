@@ -59,7 +59,15 @@ contract ReserveAttestationTest is Test {
         att.onReport(meta, abi.encode(uint8(1), uint256(1e6), uint64(block.timestamp + 1 hours), bytes32(0)));
         vm.prank(forwarder);
         vm.expectRevert();
-        att.onReport(meta, abi.encode(uint8(4), uint256(1e6), uint64(block.timestamp), bytes32(0)));
+        att.onReport(meta, abi.encode(uint8(7), uint256(1e6), uint64(block.timestamp), bytes32(0)));
+    }
+
+    function test_acceptsEveryBandUpToFiveHundred() public {
+        for (uint8 b; b <= att.AT_LEAST_500(); b++) {
+            _report(b, 1e6, uint64(block.timestamp) + b);
+            assertEq(att.latest().band, b);
+        }
+        assertEq(att.count(), 7);
     }
 
     function test_onlyTheForwarderReports() public {

@@ -21,7 +21,7 @@ import {
 import type { WalletState } from "../hooks/useWallet";
 import { useExchange } from "../hooks/useExchange";
 import { useBaseBalances, useBaseSupply } from "../hooks/useBridge";
-import { BAND_LABEL, nextAttestation, useReserveAttestation } from "../hooks/useReserveAttestation";
+import { BANDS, hourCells, nextAttestation, useReserveAttestation } from "../hooks/useReserveAttestation";
 import { TradeForm } from "../components/TradeForm";
 import { BridgeDialog, type BridgeAsset } from "../components/BridgeDialog";
 import { formatDollars, formatUnitsShort } from "../components/walletParts";
@@ -104,6 +104,8 @@ export function Trade({ wallet, onBalanceChange }: { wallet: WalletState; onBala
               </ul>
             )}
           </section>
+
+          <OffChainBacking />
 
           <HowItWorks />
 
@@ -494,7 +496,6 @@ function Reserve({ state }: { state: ExchangeState }) {
         out” counts both chains, at the latest prices: a token moved to Base Sepolia is still a
         claim on this reserve.
       </p>
-      <OffChainBacking />
     </section>
   );
 }
@@ -504,56 +505,135 @@ function Reserve({ state }: { state: ExchangeState }) {
  * account, read by a Chainlink CONFIDENTIAL workflow inside a TEE. What
  * reaches the chain, and this page, is a band; the balance stays in the
  * enclave, and no one running a node ever sees it.
+ *
+ * Its own section, high on the page: it is the claim the whole tokenized
+ * side rests on, and it used to sit as a footnote under the reserve.
  */
 function OffChainBacking() {
   const att = useReserveAttestation();
   const now = Math.floor(Date.now() / 1000);
+  const next = nextAttestation(now);
+  const band = att ? BANDS[att.band] : null;
+  const cells = hourCells(att?.history ?? [], now);
+  const due = cells.filter((c) => c.state === "attested" || c.state === "missed").length;
+  const done = cells.filter((c) => c.state === "attested").length;
+  const tone = !att ? "neutral" : att.band === 0 ? "short" : "covered";
+
   return (
-    <div className="backing">
-      <div className="backing-head">
-        <span className="backing-lock" aria-hidden="true">🔒</span>
-        <div>
-          <div style={{ fontWeight: 500 }}>Off-chain backing</div>
-          <div className="muted" style={{ fontSize: 12 }}>
-            A custodian account, checked inside a TEE by a Chainlink confidential workflow
-          </div>
-        </div>
-        <span
-          className={`wallet-status ${
-            att === undefined ? "neutral" : att === null ? "neutral" : att.band >= 1 ? "done" : "lost"
-          }`}
-          style={{ marginLeft: "auto" }}
-        >
-          {att === undefined ? "…" : att === null ? "Not attested yet" : BAND_LABEL[att.band]}
+    <section className={`wallet proof proof-${tone}`} aria-label="Proof of off-chain backing">
+      <div className="proof-top">
+        <div className="eyebrow">Proof of reserve · Chainlink confidential workflow</div>
+        <span className="proof-live">
+          <span className="proof-dot" aria-hidden="true" />
+          Checked every hour · next {formatClock(next)} ({formatRelative(next, now)})
         </span>
       </div>
-      {att && att.history.length > 1 && (
-        <div className="backing-history" aria-label="Recent attestations">
-          {att.history.map((h) => (
+
+      <div className="proof-main">
+        <svg className="proof-shield" viewBox="0 0 48 56" aria-hidden="true">
+          <path d="M24 2 4 10v16c0 13 8.6 23.4 20 28 11.4-4.6 20-15 20-28V10L24 2Z" />
+          {tone === "covered" ? (
+            <path className="proof-shield-mark" d="m15 28 6.5 6.5L33.5 22" />
+          ) : (
+            <path className="proof-shield-mark" d="M24 18v14M24 38v.5" />
+          )}
+        </svg>
+        <div>
+          <div className="proof-band">
+            {att === undefined ? "…" : att === null ? "Not attested yet" : att.band === 0 ? "Below 100%" : `≥ ${band!.short}`}
+          </div>
+          <div className="proof-says">
+            {band ? band.says : "The custodian's account has not been checked yet."}
+          </div>
+        </div>
+      </div>
+
+      <div className="proof-meter" role="img" aria-label={band ? `Coverage band: ${band.label}` : "No coverage band yet"}>
+        {BANDS.map((b, i) => (
+          <div
+            key={b.short}
+            className={`proof-step${att && (i === 0 ? att.band === 0 : i <= att.band) ? " on" : ""}${att?.band === i ? " here" : ""}`}
+          >
+            <span className="proof-step-bar" />
+            <span className="proof-step-label">{i === BANDS.length - 1 ? "500%+" : b.short}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="positions-stats">
+        <div>
+          <span>Tokens backed</span>
+          <b>{att ? formatToken(att.obligations) : "—"}</b>
+        </div>
+        <div>
+          <span>Last check</span>
+          <b>{att ? formatRelative(att.attestedAt, now) : "—"}</b>
+        </div>
+        <div>
+          <span>Balance as of</span>
+          <b>{att ? formatClock(att.balanceAsOf) : "—"}</b>
+        </div>
+        <div className={due > 0 && done === due ? "accent" : undefined}>
+          <span>Last 24 hours</span>
+          <b>{due > 0 ? `${done} / ${due} checks` : "—"}</b>
+        </div>
+      </div>
+
+      <div>
+        <div className="proof-cells" aria-label="One cell per hour, the last 24 hours">
+          {cells.map((c) => (
             <span
-              key={h.balanceAsOf}
-              className={`backing-tick band-${h.band}`}
-              title={`${formatClock(h.balanceAsOf)} · ${BAND_LABEL[h.band]}`}
+              key={c.hour}
+              className={`proof-cell ${c.state}${c.band !== undefined ? ` band-${c.band}` : ""}`}
+              title={`${formatClock(c.hour)} · ${
+                c.state === "attested"
+                  ? BANDS[c.band!]!.label
+                  : c.state === "missed"
+                    ? "missed — the DON's run failed this hour"
+                    : c.state === "pending"
+                      ? "not run yet"
+                      : "before the first check"
+              }`}
             />
           ))}
         </div>
-      )}
-      <div className="muted-strong" style={{ fontSize: 11 }}>
-        Checked every hour · next at {formatClock(nextAttestation(now))} ({formatRelative(nextAttestation(now), now)})
-      </div>
-      {att && (
-        <div className="muted-strong" style={{ fontSize: 11 }}>
-          Against {formatToken(att.obligations)} of tokens · balance as of {formatRelative(att.balanceAsOf, now)} ·
-          attested {formatRelative(att.attestedAt, now)} · {att.count} attestation{att.count === 1 ? "" : "s"} ·{" "}
-          <a href={addressUrl(RESERVE_ATTESTATION_ADDRESS)} target="_blank" rel="noreferrer">
-            contract ↗
-          </a>
+        <div className="proof-axis muted-strong">
+          {cells
+            .filter((_, i) => i % 6 === 0)
+            .map((c) => (
+              <span key={c.hour}>{formatClock(c.hour).slice(0, 5)}</span>
+            ))}
+          <span>now</span>
         </div>
-      )}
-      <div className="muted-strong" style={{ fontSize: 11 }}>
-        Only the band is published. An exact ratio would give the balance away — the tokens it is measured against
-        are public — so the account, the key and the balance never leave the enclave.
       </div>
-    </div>
+
+      <div className="proof-privacy">
+        <div>
+          <div className="proof-privacy-head">Published on chain</div>
+          <ul>
+            <li>The coverage band</li>
+            <li>What the tokens are worth — public anyway</li>
+            <li>When the balance was read</li>
+            <li>A keyed hash of the custodian's answer</li>
+          </ul>
+        </div>
+        <div className="proof-sealed">
+          <div className="proof-privacy-head">🔒 Never leaves the enclave</div>
+          <ul>
+            <li>The balance</li>
+            <li>The custodian account</li>
+            <li>The API key that reads it</li>
+          </ul>
+        </div>
+      </div>
+
+      <div className="muted-strong" style={{ fontSize: 11 }}>
+        Only a band is published: with the tokens' value on chain, an exact ratio would give the balance away.
+        Read inside an AWS Nitro enclave, agreed by the Chainlink DON, written to{" "}
+        <a href={addressUrl(att?.address ?? RESERVE_ATTESTATION_ADDRESS)} target="_blank" rel="noreferrer">
+          the attestation contract ↗
+        </a>
+      </div>
+    </section>
   );
 }

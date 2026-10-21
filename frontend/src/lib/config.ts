@@ -38,9 +38,13 @@ export const SPORTS_MARKET_ADDRESS = (import.meta.env.VITE_SPORTS_MARKET_ADDRESS
 /**
  * Where the confidential workflow (cre/reserve-attestation) records whether
  * the exchange is backed off-chain — as a coverage band, never a balance.
+ * Seven bands since 2026-10-21 (up to "at least 500%"); the first contract
+ * stopped at 200%, and its attestations are still read for the history —
+ * bands 0–3 mean the same on both.
  */
 export const RESERVE_ATTESTATION_ADDRESS = (import.meta.env.VITE_RESERVE_ATTESTATION_ADDRESS ??
-  "0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB") as `0x${string}`;
+  "0x9e7F6886B01eA9b0E5E9AF8CFF3fc25596718ED0") as `0x${string}`;
+export const RESERVE_ATTESTATION_PREVIOUS = "0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB" as const;
 
 // The fourth exchange, 2026-10-20: a cancel after a week fills at a price
 // that is already waiting instead of refunding. Same tokens; the third

@@ -1987,45 +1987,191 @@ input:focus {
 
 /* ---- the confidential off-chain backing row ------------------------------ */
 
-.backing {
+/* --- Proof of reserve: the confidential workflow's answer, given room --- */
+.proof {
+  --proof-ok: #9fd8b5;
+  --proof-tone: var(--proof-ok);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(90% 120% at 0% 0%, color-mix(in srgb, var(--proof-tone) 16%, transparent) 0%, transparent 60%),
+    radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--color-section-glow) 55%, transparent) 0%, transparent 55%),
+    var(--color-surface);
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in srgb, var(--proof-tone) 35%, transparent);
+}
+.proof-short { --proof-tone: var(--color-negative); }
+.proof-neutral { --proof-tone: var(--color-neutral-400); }
+
+.proof-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.proof-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--color-neutral-300);
+}
+.proof-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--proof-tone);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--proof-tone) 60%, transparent);
+  animation: proof-pulse 2.4s ease-out infinite;
+}
+@keyframes proof-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--proof-tone) 55%, transparent); }
+  70%, 100% { box-shadow: 0 0 0 8px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .proof-dot { animation: none; }
+}
+
+.proof-main {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.proof-shield {
+  flex: none;
+  width: 56px;
+  height: 64px;
+}
+.proof-shield path:first-child {
+  fill: color-mix(in srgb, var(--proof-tone) 18%, transparent);
+  stroke: var(--proof-tone);
+  stroke-width: 2;
+}
+.proof-shield-mark {
+  fill: none;
+  stroke: var(--proof-tone);
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.proof-band {
+  font-family: var(--font-heading);
+  font-size: 48px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--proof-tone);
+  font-variant-numeric: tabular-nums;
+}
+.proof-says {
+  margin-top: 4px;
+  font-size: 15px;
+  color: var(--color-neutral-200);
+}
+
+/* Seven steps, filled up to the band; the band itself is lifted. */
+.proof-meter {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.proof-step {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 12px 14px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-bg) 50%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
-.backing-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.proof-step-bar {
+  height: 10px;
+  border-radius: 3px;
+  background: var(--color-neutral-800);
 }
-.backing-lock {
+.proof-step:first-child .proof-step-bar { border-radius: 6px 3px 3px 6px; }
+.proof-step:last-child .proof-step-bar { border-radius: 3px 6px 6px 3px; }
+.proof-step.on .proof-step-bar {
+  background: color-mix(in srgb, var(--proof-tone) 70%, transparent);
+}
+.proof-step.here .proof-step-bar {
+  background: var(--proof-tone);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--proof-tone) 60%, transparent);
+}
+.proof-step-label {
+  font-size: 11px;
+  text-align: center;
+  color: var(--color-neutral-500);
+  font-variant-numeric: tabular-nums;
+}
+.proof-step.on .proof-step-label { color: var(--color-neutral-300); }
+.proof-step.here .proof-step-label { color: var(--proof-tone); font-weight: 600; }
+
+/* One cell per hour: colour is the band, a gap is a run the DON missed. */
+.proof-cells {
   display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--color-accent-900);
-  font-size: 15px;
+  grid-template-columns: repeat(24, 1fr);
+  gap: 3px;
+}
+.proof-cell {
+  height: 26px;
+  border-radius: 3px;
+  background: var(--color-neutral-800);
+}
+.proof-cell.before { background: color-mix(in srgb, var(--color-neutral-800) 45%, transparent); }
+.proof-cell.pending { background: transparent; box-shadow: inset 0 0 0 1px var(--color-neutral-700); }
+.proof-cell.missed {
+  background: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in srgb, var(--color-negative) 35%, transparent) 3px 5px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-negative) 45%, transparent);
+}
+.proof-cell.attested.band-0 { background: var(--color-negative); }
+.proof-cell.attested.band-1 { background: color-mix(in srgb, var(--proof-ok) 40%, transparent); }
+.proof-cell.attested.band-2 { background: color-mix(in srgb, var(--proof-ok) 52%, transparent); }
+.proof-cell.attested.band-3 { background: color-mix(in srgb, var(--proof-ok) 64%, transparent); }
+.proof-cell.attested.band-4 { background: color-mix(in srgb, var(--proof-ok) 76%, transparent); }
+.proof-cell.attested.band-5 { background: color-mix(in srgb, var(--proof-ok) 88%, transparent); }
+.proof-cell.attested.band-6 { background: var(--proof-ok); }
+.proof-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
-/* One tick per hourly attestation, coloured by band: a run of green is the
-   claim that the backing is checked again and again, not once. */
-.backing-history {
+.proof-privacy {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.proof-privacy > div {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg) 55%, transparent);
+}
+.proof-privacy .proof-sealed {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+.proof-privacy-head {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-neutral-400);
+  margin-bottom: 6px;
+}
+.proof-sealed .proof-privacy-head { color: var(--color-accent-300); }
+.proof-privacy ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 13px;
+  color: var(--color-neutral-200);
   display: flex;
+  flex-direction: column;
   gap: 3px;
-  flex-wrap: wrap;
 }
-.backing-tick {
-  width: 8px;
-  height: 14px;
-  border-radius: 2px;
-  background: var(--color-neutral-700);
+
+@media (max-width: 720px) {
+  .proof-band { font-size: 38px; }
+  .proof-shield { width: 44px; height: 50px; }
+  .proof-privacy { grid-template-columns: 1fr; }
+  .proof-cells { gap: 2px; }
+  .proof-cell { height: 20px; }
+  .proof-step-label { font-size: 10px; }
 }
-.backing-tick.band-0 { background: var(--color-negative); }
-.backing-tick.band-1 { background: color-mix(in srgb, #9fd8b5 55%, transparent); }
-.backing-tick.band-2 { background: color-mix(in srgb, #9fd8b5 80%, transparent); }
-.backing-tick.band-3 { background: #9fd8b5; }

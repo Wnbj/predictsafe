@@ -42,8 +42,9 @@ import { z } from 'zod'
  *     fetch the account, and compare the balance with what the tokens are
  *     worth. The key, the response and the balance never leave the enclave.
  *  3. Back on the DON: report only a coverage BAND — below 100%, ≥100%, ≥150%,
- *     ≥200% — to ReserveAttestation. An exact ratio would give the balance
- *     away, since the obligations it is measured against are on chain.
+ *     ≥200%, ≥300%, ≥400%, ≥500% — to ReserveAttestation. An exact ratio would
+ *     give the balance away, since the obligations it is measured against are
+ *     on chain; past 500% the band says nothing more about how large it is.
  *
  * What is NOT confidential, and should be said: this code. The handler ships
  * in the binary the DON hands to the enclave; the enclave protects the data
@@ -71,6 +72,12 @@ export const BAND_BELOW = 0
 export const BAND_100 = 1
 export const BAND_150 = 2
 export const BAND_200 = 3
+export const BAND_300 = 4
+export const BAND_400 = 5
+export const BAND_500 = 6
+
+/** Lower bound of each band above BAND_BELOW, in basis points of the obligations. */
+const BAND_FLOORS_BPS = [10_000n, 15_000n, 20_000n, 30_000n, 40_000n, 50_000n] as const
 
 // --- pure: what decides the band, testable without a DON --------------------
 
@@ -83,9 +90,13 @@ export const parseUsd6 = (s: string): bigint => {
 
 /** Which band a balance falls in against what the tokens are worth. */
 export const coverageBand = (balance6: bigint, obligations6: bigint): number => {
-	if (obligations6 === 0n) return BAND_200
+	if (obligations6 === 0n) return BAND_500
 	const bps = (balance6 * 10_000n) / obligations6
-	return bps >= 20_000n ? BAND_200 : bps >= 15_000n ? BAND_150 : bps >= 10_000n ? BAND_100 : BAND_BELOW
+	let band = BAND_BELOW
+	BAND_FLOORS_BPS.forEach((floor, i) => {
+		if (bps >= floor) band = i + 1
+	})
+	return band
 }
 
 /** Tokens (18 decimals) at a feed price, in mUSDC — the exchange's own conversion. */

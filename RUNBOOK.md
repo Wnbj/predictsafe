@@ -1429,7 +1429,12 @@ A SEPARATE workflow, `predictsafe-reserve` (`cre/reserve-attestation`), not a
 handler in `predictsafe-settlement`: that one is at the ten-trigger limit, and
 this one's handler runs in a TEE (`handlerInTee`, AWS Nitro, us-west-2). It has
 its own name, so its own receiver: `ReserveAttestation`
-`0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB`. Workflow ID `006c8ef3…`,
+`0x9e7F6886B01eA9b0E5E9AF8CFF3fc25596718ED0`, seven bands — below 100%, then
+at least 100 / 150 / 200 / 300 / 400 / 500% — since 2026-10-21 15:25 UTC
+(workflow `0064654c…`). The first contract, `0xC1C2…5DdB`, stopped at 200% and
+holds the first fifteen attestations; the app reads both for its history.
+More bands publish more about the balance: "at least 500%" against ~484 mUSDC
+of tokens says the account holds at least ~2,420. Workflow ID `006c8ef3…`,
 deployed 2026-10-20 21:50 UTC, cron `0 45 * * * *`.
 
 **Per run:** on the DON, `assetCount`/`asset(i)` on the exchange, each feed's
@@ -1463,8 +1468,8 @@ vault. A mismatch shows as `Custodian answered HTTP 401` in
 
 **Showing a different band** needs no workflow change: set `CUSTODIAN_BALANCE`
 in Vercel, redeploy, and the next :45 run reports it. At ~483 mUSDC of tokens
-outstanding: below ~483 is red, ~483–724 is ≥100%, ~724–965 ≥150%, above that
-≥200%. The bands are coarse on purpose — `obligations` is on chain, so an exact
+outstanding: below ~483 is red, then ≥100% from ~483, ≥150% from ~724, ≥200%
+from ~965, ≥300% from ~1,449, ≥400% from ~1,932 and ≥500% from ~2,415. The bands are coarse on purpose — `obligations` is on chain, so an exact
 ratio would publish the balance.
 
 **What the obligations miss.** Tokens in flight over CCIP — burned on one

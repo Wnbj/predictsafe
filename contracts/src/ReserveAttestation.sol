@@ -18,7 +18,9 @@ import {ReceiverTemplate} from "./interfaces/ReceiverTemplate.sol";
  *
  *  WHY A BAND AND NOT A PERCENTAGE. With the obligations on chain, an exact
  *  coverage ratio IS the balance — multiply one by the other. So the report
- *  says only which side of 100%, 150% and 200% it falls on.
+ *  says only which side of 100%, 150%, 200%, 300%, 400% and 500% it falls on.
+ *  Every extra band narrows what the balance could be; past 500% the answer
+ *  is simply "at least five times over", however large the account.
  *
  *  `evidenceHash` is keccak256(apiKey ‖ custodian response): binding — the
  *  custodian or an auditor holding the key can recompute it — but useless to
@@ -29,11 +31,14 @@ import {ReceiverTemplate} from "./interfaces/ReceiverTemplate.sol";
  *  attestations only move forward in time.
  */
 contract ReserveAttestation is ReceiverTemplate {
-    /// Coverage below 100%, at least 100%, at least 150%, at least 200%.
+    /// Coverage below 100%, then at least 100, 150, 200, 300, 400 and 500%.
     uint8 public constant BELOW = 0;
     uint8 public constant AT_LEAST_100 = 1;
     uint8 public constant AT_LEAST_150 = 2;
     uint8 public constant AT_LEAST_200 = 3;
+    uint8 public constant AT_LEAST_300 = 4;
+    uint8 public constant AT_LEAST_400 = 5;
+    uint8 public constant AT_LEAST_500 = 6;
 
     /// Clock skew allowed between the custodian and the chain.
     uint64 public constant MAX_FUTURE = 10 minutes;
@@ -71,7 +76,7 @@ contract ReserveAttestation is ReceiverTemplate {
     function _processReport(bytes calldata report) internal override {
         (uint8 band, uint256 obligations, uint64 balanceAsOf, bytes32 evidenceHash) =
             abi.decode(report, (uint8, uint256, uint64, bytes32));
-        if (band > AT_LEAST_200) revert BadBand(band);
+        if (band > AT_LEAST_500) revert BadBand(band);
         if (balanceAsOf > block.timestamp + MAX_FUTURE) revert FromTheFuture(balanceAsOf);
         if (count > 0 && balanceAsOf < _latest.balanceAsOf) revert Stale(balanceAsOf, _latest.balanceAsOf);
 

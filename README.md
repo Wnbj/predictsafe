@@ -97,7 +97,7 @@ through **Chainlink CCIP** — see
 | SettlementKeeper | `0xd3b59FA7DfdDdcacf4F251a70F728C7AC0891C43` |
 | MarketScheduler | `0x5A3da37c424b7957F6DE67937Bc447a7Fa104B6B` |
 | SportsMarket | `0xF30D56E3586091dFe63B74338a194d37Cef80906` |
-| ReserveAttestation (confidential workflow) | `0xC1C2B6f925C50CD7611853CeAE8bDCd1F7Ef5DdB` |
+| ReserveAttestation (confidential workflow) | `0x9e7F6886B01eA9b0E5E9AF8CFF3fc25596718ED0` |
 
 **All five settle through a real DON** — ten nodes, the production
 KeystoneForwarder `0xF8344CFd…4482`, workflow `predictsafe-settlement`. Every
@@ -307,7 +307,7 @@ Workflow**: its handler runs inside a TEE. It reads what the tokens are worth
 from both chains on the DON (public anyway), then — inside the enclave —
 unseals the custodian's API key from the Vault DON, fetches the account, and
 compares. Only a coverage band crosses back and goes on chain: below 100%,
-≥100%, ≥150%, ≥200%. An exact ratio would leak the balance, because the
+≥100%, ≥150%, ≥200%, ≥300%, ≥400%, ≥500%. An exact ratio would leak the balance, because the
 obligations it is divided by are public. The Trade page shows the band under
 the reserve.
 

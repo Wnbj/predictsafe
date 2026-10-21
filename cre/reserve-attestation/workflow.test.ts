@@ -4,6 +4,9 @@ import {
 	BAND_100,
 	BAND_150,
 	BAND_200,
+	BAND_300,
+	BAND_400,
+	BAND_500,
 	BAND_BELOW,
 	coverageBand,
 	encodeAttestation,
@@ -46,10 +49,16 @@ describe('coverage band', () => {
 		expect(coverageBand(463_064_999n, obligations)).toBe(BAND_100)
 		expect(coverageBand(617_420_000n, obligations)).toBe(BAND_200)
 		expect(coverageBand(500_000_000n, obligations)).toBe(BAND_150) // the demo balance
+		expect(coverageBand(926_129_999n, obligations)).toBe(BAND_200)
+		expect(coverageBand(926_130_000n, obligations)).toBe(BAND_300) // exactly 300%
+		expect(coverageBand(1_234_840_000n, obligations)).toBe(BAND_400)
+		expect(coverageBand(1_543_549_999n, obligations)).toBe(BAND_400)
+		expect(coverageBand(1_543_550_000n, obligations)).toBe(BAND_500) // exactly 500%
+		expect(coverageBand(7_500_000_000n, obligations)).toBe(BAND_500) // and anything beyond
 	})
 
 	test('nothing outstanding is fully covered', () => {
-		expect(coverageBand(0n, 0n)).toBe(BAND_200)
+		expect(coverageBand(0n, 0n)).toBe(BAND_500)
 	})
 })
 
