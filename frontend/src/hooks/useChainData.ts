@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Address } from "viem";
 import {
   readAllowance,
@@ -24,6 +24,9 @@ import {
   type TraderStats,
   isAmm,
 } from "../lib/types";
+
+/** How often the board re-reads the chain while the tab is visible. */
+const BOARD_REFRESH_MS = 120_000;
 
 export interface ChainData {
   markets: Market[];
@@ -399,12 +402,49 @@ export function useChainData(account: Address | null): ChainData {
     }
   }, [account]);
 
+  /*
+   * One read at a time. A read that started earlier could otherwise land
+   * after a later one — the poll below racing the refresh a transaction asks
+   * for — and put pre-trade numbers back on screen. A caller arriving while a
+   * read is in flight waits for it, then reads again.
+   */
+  const running = useRef<Promise<void> | null>(null);
+  const refreshSerial = useCallback(async () => {
+    while (running.current) await running.current.catch(() => undefined);
+    const p = refresh();
+    running.current = p;
+    try {
+      await p;
+    } finally {
+      if (running.current === p) running.current = null;
+    }
+  }, [refresh]);
+
   // Not `setLoading(true)`: connecting a wallet used to blank every page back
   // to "Loading markets" while markets that had not changed were read again.
   useEffect(() => {
     setEnriching(true);
-    void refresh();
-  }, [refresh]);
+    void refreshSerial();
+  }, [refreshSerial]);
+
+  /*
+   * The board used to be read once per page load: the scheduler opens markets
+   * every half hour and the DON settles them, and none of it showed until a
+   * reload. Every two minutes while the tab is visible — the log scan only
+   * reads the blocks since its cursor — and at once when it becomes visible
+   * again. A read still in flight is not stacked.
+   */
+  useEffect(() => {
+    const tick = () => {
+      if (!document.hidden && !running.current) void refreshSerial();
+    };
+    const t = setInterval(tick, BOARD_REFRESH_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [refreshSerial]);
 
   return {
     markets,
@@ -420,6 +460,6 @@ export function useChainData(account: Address | null): ChainData {
     error,
     failedCategories,
     historyDegraded,
-    refresh,
+    refresh: refreshSerial,
   };
 }

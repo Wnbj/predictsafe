@@ -10,6 +10,7 @@ import {
   type TradeEvent,
 } from "../lib/types";
 import { ladderTitle, type MarketEvent } from "../lib/events";
+import { resolutionOf } from "../lib/resolution";
 import { StrikeLadder } from "./StrikeLadder";
 import { Countdown } from "./Countdown";
 import { LivePrice } from "./LivePrice";
@@ -33,6 +34,9 @@ export function MarketCard({
   // own showed 32.5 / 67.5 as "Yes 33% · No 68%", a book that sums to 101%.
   const yesShown = yes === null ? null : Math.round(yes);
   const no = yesShown === null ? null : 100 - yesShown;
+  // Once the answer is known the card states it; the odds it closed at are a
+  // forecast and stay on the market's own page.
+  const resolution = resolutionOf(market);
 
   /**
    * A ladder card stands for five markets, so quoting one rung's strike in the
@@ -112,11 +116,46 @@ export function MarketCard({
         </div>
       )}
 
-      <LivePrice market={market} size={12} />
+      {!resolution && <LivePrice market={market} size={12} />}
+
+      {resolution && (!ladder || market.categoryId === "sports") && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            padding: "8px 10px",
+            borderRadius: "var(--radius-sm)",
+            background: "color-mix(in srgb, var(--color-text) 5%, transparent)",
+          }}
+        >
+          <span
+            className="heading"
+            style={{
+              fontSize: 15,
+              // A match card names the winner whichever of its three
+              // markets it features, so it is never coloured as a loss.
+              color:
+                resolution.tone === "void"
+                  ? "var(--color-neutral-400)"
+                  : resolution.tone === "yes" || market.categoryId === "sports"
+                    ? "var(--color-accent-300)"
+                    : "var(--color-negative)",
+            }}
+          >
+            {resolution.headline}
+          </span>
+          {resolution.detail && (
+            <span className="muted" style={{ fontSize: 12 }}>
+              {resolution.detail}
+            </span>
+          )}
+        </div>
+      )}
 
       {ladder ? (
         <StrikeLadder event={ladder} onOpen={onOpen} compact />
-      ) : (
+      ) : resolution ? null : (
         <>
           <Sparkline market={market} events={events} />
           <div style={{ display: "flex", height: 22, borderRadius: 5, overflow: "hidden" }}>
@@ -141,9 +180,11 @@ export function MarketCard({
             ? market.categoryId === "sports"
               ? "Home · Draw · Away"
               : `${ladder.rungs.length} strikes`
-            : yes === null
-              ? "No stakes yet"
-              : `Yes ${formatPercent(yesShown)} · No ${formatPercent(no)}`}
+            : resolution
+              ? ""
+              : yes === null
+                ? "No stakes yet"
+                : `Yes ${formatPercent(yesShown)} · No ${formatPercent(no)}`}
         </span>
         <span style={{ whiteSpace: "nowrap" }}>{formatToken(totalPool(market))} pool</span>
       </div>

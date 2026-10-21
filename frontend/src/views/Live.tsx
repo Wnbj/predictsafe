@@ -142,7 +142,10 @@ export function Live({
       {done.length > 0 && (
         <section className="wallet" aria-label="Settled to date">
           <div className="live-list-head">
-            <div className="eyebrow">Settled to date · {done.length}</div>
+            {/* "Resolved", not "settled": the list also holds markets the owner
+                voided, which the Settled count above leaves out on purpose —
+                and the count above includes the test runs hidden here. */}
+            <div className="eyebrow">Resolved to date · {done.length}</div>
             {rehearsals > 0 && (
               <button type="button" className="linklike muted" style={{ fontSize: 12 }} onClick={() => setShowRehearsals((v) => !v)}>
                 {showRehearsals
@@ -450,6 +453,10 @@ function HistoryRow({
             >
               requested {requestedAt ? formatRelative(requestedAt, now) : `at block ${attempt.requested.blockNumber}`}
             </a>
+          ) : attempt.market?.categoryId === "sports" ? (
+            // A match has no request step: the DON reads the result and
+            // settles all three markets on its own schedule.
+            <span className="muted">settled by the DON directly, no request</span>
           ) : (
             <span className="muted">requested before this scan</span>
           )}

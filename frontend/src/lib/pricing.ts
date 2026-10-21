@@ -192,3 +192,8 @@ export function slippageBound(shown: bigint | null, fresh: bigint): { minOut: bi
   const minOut = ((shown ?? fresh) * 99n) / 100n;
   return fresh < minOut ? { moved: true } : { minOut };
 }
+
+/** Not yet paid out or refunded — still something to stake on or wait for. */
+export function isActive(m: Market): boolean {
+  return m.status !== MarketStatus.Settled && m.status !== MarketStatus.Void;
+}

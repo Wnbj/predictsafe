@@ -48,6 +48,9 @@ export function useCandleHistory(
     }
     const controller = new AbortController();
     let cancelled = false;
+    // A new symbol or range starts empty; a failed REFRESH of the same one
+    // keeps what is on screen — it used to blank the chart on one bad poll.
+    let first = true;
 
     const load = async () => {
       setLoading(true);
@@ -67,14 +70,17 @@ export function useCandleHistory(
       } catch {
         // A missed fetch is not worth surfacing here — the previous candles
         // stay on screen and the next poll corrects it.
-        if (!cancelled) setCandles([]);
+        if (!cancelled && first) setCandles([]);
       } finally {
+        first = false;
         if (!cancelled) setLoading(false);
       }
     };
 
     void load();
-    const t = setInterval(() => void load(), 30_000);
+    const t = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 30_000);
     return () => {
       cancelled = true;
       controller.abort();

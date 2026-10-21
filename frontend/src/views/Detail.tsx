@@ -3,6 +3,8 @@ import { category, coverBackground } from "../lib/categories";
 import { addressUrl, ATTESTATION_LABEL, txUrl, attestationFor} from "../lib/config";
 import { formatDepartureDate, formatMarketValue, formatPercent, formatTimestamp, formatToken, outcomeLabel, shortAddress, statusLabel } from "../lib/format";
 import {
+  isActive,
+  isUnstakedAndResolved,
   impliedYesPercent,
   isOneSided,
 
@@ -20,7 +22,7 @@ import {
   type SettledEvent,
   type TradeEvent,
 } from "../lib/types";
-import { ladderFor } from "../lib/events";
+import { groupIntoEvents, isLadder, ladderFor } from "../lib/events";
 import { StrikeLadder } from "../components/StrikeLadder";
 import { Sparkline } from "../components/Sparkline";
 import { Countdown } from "../components/Countdown";
@@ -105,10 +107,22 @@ export function Detail({
   // Sibling rungs are already shown as the ladder, so exclude them here —
   // otherwise the same markets appear twice on one page.
   const ladderKeys = new Set(ladder?.rungs.map((m) => m.key) ?? []);
-  const related = markets
-    .filter(
-      (m) => m.categoryId === market.categoryId && m.key !== market.key && !ladderKeys.has(m.key),
-    )
+  /*
+   * Grouped the way the board groups them: a match's three markets used to
+   * appear here as three cards all titled "Lille v Galatasaray", each with a
+   * different "Yes" and nothing saying which outcome it was. Open ones first,
+   * and none of the unstaked rehearsals the board hides either.
+   */
+  const related = groupIntoEvents(
+    markets.filter(
+      (m) =>
+        m.categoryId === market.categoryId &&
+        m.key !== market.key &&
+        !ladderKeys.has(m.key) &&
+        !isUnstakedAndResolved(m),
+    ),
+  )
+    .sort((a, b) => Number(isActive(b.featured)) - Number(isActive(a.featured)))
     .slice(0, 3);
 
   return (
@@ -598,8 +612,14 @@ export function Detail({
             More in {cat.name}
           </h3>
           <div className="grid-3">
-            {related.map((m) => (
-              <MarketCard key={m.key} market={m} events={tradeEvents} onOpen={onOpenMarket} />
+            {related.map((event) => (
+              <MarketCard
+                key={event.key}
+                market={event.featured}
+                ladder={isLadder(event) ? event : undefined}
+                events={tradeEvents}
+                onOpen={onOpenMarket}
+              />
             ))}
           </div>
         </div>

@@ -24,7 +24,7 @@ import {
   type ContractCall,
 } from "../lib/chain";
 import { canBatch, headroomLabel, writeWithApproval } from "../lib/approval";
-import { isAmm as isAmmMarket, type Market, type Position, type Side } from "../lib/types";
+import { isAmm as isAmmMarket, MarketStatus, type Market, type Position, type Side } from "../lib/types";
 import type { WalletState } from "../hooks/useWallet";
 
 type Busy = null | "approving" | "staking" | "claiming" | "minting" | "settling";
@@ -212,7 +212,9 @@ export function TradePanel({
       <aside className="trade-panel market-panel">
         <div className="eyebrow">Trade</div>
         <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-          Connect a wallet on Sepolia to stake on this market.
+          {market.status === MarketStatus.Settled || market.status === MarketStatus.Void
+            ? "Connect a wallet on Sepolia to claim what this market owes you."
+            : `Connect a wallet on Sepolia to ${isAmm ? "trade" : "stake"} on this market.`}
         </p>
         <button className="btn btn-accent" onClick={() => void wallet.connect()}>
           Connect wallet

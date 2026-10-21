@@ -1,7 +1,7 @@
 import { formatMarketValue, formatPercent } from "../lib/format";
 import { outcomeLabel } from "../lib/sports";
 import { impliedYesPercent } from "../lib/pricing";
-import { isPriceMarket } from "../lib/types";
+import { isPriceMarket, MarketStatus, Outcome, type Market } from "../lib/types";
 import type { MarketEvent } from "../lib/events";
 
 /**
@@ -12,6 +12,18 @@ import type { MarketEvent } from "../lib/events";
  * strikes is the market's whole view of where the price will land. Splitting
  * that into five cards throws the shape away.
  */
+/**
+ * A resolved rung shows its answer, not the odds it closed at: three outcomes
+ * of a finished match read 68% / 27% / 28% — 123% — about a game already won.
+ */
+function rungResult(m: Market): { text: string; won: boolean } | null {
+  if (m.status === MarketStatus.Void) return { text: "Void", won: false };
+  if (m.status !== MarketStatus.Settled) return null;
+  const won = m.outcome === Outcome.Yes;
+  if (m.categoryId === "sports") return { text: won ? "✓ Won" : "—", won };
+  return { text: won ? "✓ Yes" : "No", won };
+}
+
 export function StrikeLadder({
   event,
   selectedKey,
@@ -32,6 +44,7 @@ export function StrikeLadder({
     <div style={{ display: "flex", flexDirection: "column", gap: compact ? 2 : 4 }}>
       {rungs.map((m) => {
         const yes = impliedYesPercent(m);
+        const result = rungResult(m);
         const isSelected = m.key === selectedKey;
         return (
           <button
@@ -70,6 +83,17 @@ export function StrikeLadder({
               {!compact && !sports && " or above"}
             </span>
 
+            {result ? (
+              <span
+                className="heading"
+                style={{
+                  flexShrink: 0,
+                  color: result.won ? "var(--color-accent-300)" : "var(--color-neutral-500)",
+                }}
+              >
+                {result.text}
+              </span>
+            ) : (
             <span style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
               {/* A bar makes the curve readable at a glance; the number alone
                   requires the reader to do the comparing. */}
@@ -104,6 +128,7 @@ export function StrikeLadder({
                 {yes === null ? "—" : formatPercent(yes)}
               </span>
             </span>
+            )}
           </button>
         );
       })}

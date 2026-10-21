@@ -1,10 +1,9 @@
 import { useMemo, useState } from "react";
 import { CATEGORIES } from "../lib/categories";
-import { isUnstakedAndResolved, totalPool } from "../lib/pricing";
+import { isActive, isUnstakedAndResolved, totalPool } from "../lib/pricing";
 import type { CategoryId, Market, TradeEvent } from "../lib/types";
 import { MarketCard } from "../components/MarketCard";
 import { groupIntoEvents, isLadder } from "../lib/events";
-import { MarketStatus } from "../lib/types";
 import { CreateMarket } from "../components/CreateMarket";
 import { formatToken } from "../lib/format";
 import type { WalletState } from "../hooks/useWallet";
@@ -17,10 +16,6 @@ const STATUSES: { key: StatusFilter; label: string }[] = [
   { key: "active", label: "Active" },
   { key: "resolved", label: "Resolved" },
 ];
-
-/** Not yet paid out or refunded — still something to stake on or wait for. */
-const isActive = (m: Market) =>
-  m.status !== MarketStatus.Settled && m.status !== MarketStatus.Void;
 
 const SORTS: { key: SortMode; label: string }[] = [
   { key: "backed", label: "Most backed" },
