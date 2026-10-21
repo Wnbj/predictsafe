@@ -1483,7 +1483,13 @@ hour sees identical bytes. The contract refuses a report older than the latest
 483.20 mUSDC with the custodian's 22:00 timestamp. But the transaction spent
 684,526 of a 700,000 limit and the forwarder recorded `result = false`:
 checking ten node signatures takes most of it, and the receiver's first write
-fills five cold storage slots. Raised to 1.2M. The execution itself read
+fills five cold storage slots. Raised to 1.2M (workflow `003f07ea…`).
+
+**Proven the next hour:** 23:45:36 UTC, tx `0x52007155…`, sent to the
+forwarder by a DON node, `ReportProcessed(result = true)`, 741,687 gas.
+`ReserveAttestation` now reads count 1, band 3 (at least 200%) against 482.03
+mUSDC of tokens, the custodian's balance as of 23:00 UTC. The balance itself
+appears nowhere — not on chain, not in a log. The execution itself read
 SUCCESS — as always, only `ReportProcessed` tells a delivery from a refusal.
 
 **Verify a run:** `count()` and `latest()` on `ReserveAttestation`, the
