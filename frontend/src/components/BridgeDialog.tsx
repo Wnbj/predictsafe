@@ -14,7 +14,10 @@ import {
 } from "../lib/ccip";
 import { valueOf } from "../lib/exchange";
 import { destinationHead, recordTransfer } from "../lib/transfers";
+import { READ_TIMEOUT_MS, withTimeout } from "../lib/waiting";
+import { useStalled } from "../hooks/useStalled";
 import { ChainBadge, formatDollars, formatUnitsShort } from "./walletParts";
+import { STOPPED_WAITING, WalletStalled } from "./WalletStalled";
 
 /** One asset as the dialog needs it: where it is and what it is worth. */
 export interface BridgeAsset {
@@ -30,7 +33,7 @@ export interface BridgeAsset {
 const other = (s: CcipSide): CcipSide => (s === "sepolia" ? "base" : "sepolia");
 const PERCENTS = [25, 50, 75] as const;
 
-type Phase = "form" | "wallet" | "confirming" | "done";
+type Phase = "form" | "preparing" | "wallet" | "confirming" | "done";
 
 /**
  * Moving a token between Ethereum Sepolia and Base Sepolia, as a wallet would
@@ -41,6 +44,12 @@ type Phase = "form" | "wallet" | "confirming" | "done";
  * The transfer is recorded (lib/transfers) the moment its source transaction
  * confirms, from this closure rather than from component state, so closing the
  * dialog or leaving the page mid-confirmation still leaves it in Activity.
+ *
+ * It must never trap anyone. A wallet request can simply not come back — its
+ * window closed or hidden behind a full-screen browser — and this dialog used
+ * to disable every exit while waiting, which froze a demo. The × always works,
+ * and after a while without an answer the dialog says what is happening and
+ * offers to stop. A send that is confirmed after that still gets recorded.
  */
 export function BridgeDialog({
   account,
@@ -64,6 +73,8 @@ export function BridgeDialog({
   const [error, setError] = useState<string | null>(null);
   const [sentHash, setSentHash] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** Which send the screen follows: stopping moves on, and a late answer must not move it back. */
+  const attempt = useRef(0);
 
   const asset = assets.find((a) => a.symbol === symbol) ?? assets[0]!;
   const to = other(from);
@@ -77,16 +88,19 @@ export function BridgeDialog({
   }
   const tooMuch = amount !== null && amount > available;
   const valid = amount !== null && amount > 0n && !tooMuch;
-  const busy = phase === "wallet" || phase === "confirming";
+  const busy = phase === "preparing" || phase === "wallet" || phase === "confirming";
+  const stalled = useStalled(phase === "wallet");
+  // A stray click or Escape must not close the dialog mid-signature, until the
+  // wallet has gone quiet. The × is deliberate, so it always works.
+  const guarded = phase === "wallet" && !stalled;
 
-  // Escape closes, except while the wallet is open: the user is mid-signature.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && phase !== "wallet") onClose();
+      if (e.key === "Escape" && !guarded) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, phase]);
+  }, [onClose, guarded]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -149,16 +163,27 @@ export function BridgeDialog({
   const send = async () => {
     if (!valid || amount === null) return;
     const sending = { from, to, symbol, amount };
-    setPhase("wallet");
+    const mine = ++attempt.current;
+    const following = () => attempt.current === mine;
+    const show = (p: Phase) => {
+      if (following()) setPhase(p);
+    };
+    show("preparing");
     setError(null);
     try {
-      if (from === "base") await ensureWalletOn("base");
-      const side = await readBridgeSide(from, symbol, account);
-      if (!side) throw new Error("This token is not deployed on that chain.");
-      const [f, head] = await Promise.all([
-        bridgeFee(from, account, side.token, amount),
-        destinationHead(to),
-      ]);
+      const { side, f, head } = await withTimeout(
+        (async () => {
+          const side = await readBridgeSide(from, symbol, account);
+          if (!side) throw new Error("This token is not deployed on that chain.");
+          const [f, head] = await Promise.all([bridgeFee(from, account, side.token, amount), destinationHead(to)]);
+          return { side, f, head };
+        })(),
+        READ_TIMEOUT_MS,
+        "Could not reach the network to prepare this. Nothing was sent — try again.",
+      );
+      show("wallet");
+      // Sepolia as well: the wallet can be left on Base by an earlier attempt.
+      await ensureWalletOn(from);
       const hash = await writeWithApproval({
         account,
         spender: CCIP_CHAINS[from].router,
@@ -168,7 +193,9 @@ export function BridgeDialog({
         call: ccipSendCall(from, account, side.token, amount, f),
         label: "CCIP transfer",
         network: CCIP_CHAINS[from].network,
-        onSubmitted: () => setPhase("confirming"),
+        onApprovalSent: () => show("confirming"),
+        onSigning: () => show("wallet"),
+        onSubmitted: () => show("confirming"),
       });
       recordTransfer(account, {
         hash,
@@ -180,10 +207,13 @@ export function BridgeDialog({
         destFromBlock: head.toString(),
         scannedTo: head.toString(),
       });
-      setSentHash(hash);
-      setPhase("done");
       onSent();
+      if (following()) {
+        setSentHash(hash);
+        setPhase("done");
+      }
     } catch (e) {
+      if (!following()) return;
       const msg = e instanceof Error ? e.message : String(e);
       setError(
         /User rejected|denied/i.test(msg)
@@ -198,16 +228,22 @@ export function BridgeDialog({
     }
   };
 
+  const stopWaiting = () => {
+    attempt.current++;
+    setPhase("form");
+    setError(STOPPED_WAITING);
+  };
+
   const value = valid && amount !== null ? valueOf(amount, asset.price, asset.feedDecimals) : null;
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && phase !== "wallet" && onClose()}>
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && !guarded && onClose()}>
       <div className="modal" role="dialog" aria-modal="true" aria-label="CCIP transfer">
         <div className="modal-head">
           <div className="heading" style={{ fontSize: 18 }}>
             {phase === "done" ? "On its way" : "CCIP Transfer"}
           </div>
-          <button className="modal-close" aria-label="Close" onClick={onClose} disabled={phase === "wallet"}>
+          <button className="modal-close" aria-label="Close" onClick={onClose}>
             ×
           </button>
         </div>
@@ -348,9 +384,12 @@ export function BridgeDialog({
               </div>
             )}
             {error && <div style={{ color: "var(--color-negative)", fontSize: 13 }}>{error}</div>}
+            {phase === "wallet" && stalled && <WalletStalled onStop={stopWaiting} />}
 
             <button className="btn btn-accent bridge-submit" disabled={!valid || busy || lowGas} onClick={() => void send()}>
-              {phase === "wallet"
+              {phase === "preparing"
+                ? "Preparing…"
+                : phase === "wallet"
                 ? "Confirm in your wallet…"
                 : phase === "confirming"
                   ? `Waiting for ${CCIP_CHAINS[from].network.name}…`

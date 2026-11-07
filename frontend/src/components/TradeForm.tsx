@@ -30,10 +30,13 @@ import {
   type CcipSide,
 } from "../lib/ccip";
 import { destinationHead, recordTransfer } from "../lib/transfers";
+import { READ_TIMEOUT_MS, withTimeout } from "../lib/waiting";
+import { useStalled } from "../hooks/useStalled";
+import { STOPPED_WAITING, WalletStalled } from "./WalletStalled";
 
 const PERCENTS = [25, 50, 75] as const;
 
-type Phase = "form" | "approving" | "wallet" | "confirming" | "done";
+type Phase = "form" | "preparing" | "approving" | "wallet" | "confirming" | "done";
 
 /**
  * Placing an order: side, asset, amount with share buttons, what it is
@@ -96,6 +99,8 @@ export function TradeForm({
   const [from, setFrom] = useState<CcipSide>("sepolia");
   const [ccipFee, setCcipFee] = useState<bigint | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** Which order the screen follows: stopping moves on, and a late answer must not move it back. */
+  const attempt = useRef(0);
 
   const asset = state.assets.find((a) => a.id === assetId) ?? state.assets[0]!;
   const symbol = `s${asset.symbol}`;
@@ -105,7 +110,7 @@ export function TradeForm({
   const fromBase = !buying && from === "base";
   const available = buying ? usdc.balance : fromBase ? onBase : asset.balance;
   const m = marketState(asset, now);
-  const busy = phase === "approving" || phase === "wallet" || phase === "confirming";
+  const busy = phase === "preparing" || phase === "approving" || phase === "wallet" || phase === "confirming";
 
   let amount: bigint | null = null;
   try {
@@ -123,10 +128,26 @@ export function TradeForm({
   // refunded at fill time rather than paid in part.
   const beyondReserve = sell !== null && sell.payout > state.reserve;
 
+  // A wallet request can never come back (its window closed or hidden), so
+  // the guard against closing mid-signature ends once the wallet has gone quiet.
   const signing = phase === "wallet" || phase === "approving";
+  const stalled = useStalled(signing);
   useEffect(() => {
-    onBusy?.(signing);
-  }, [onBusy, signing]);
+    onBusy?.(signing && !stalled);
+  }, [onBusy, signing, stalled]);
+
+  /** Starts following a new attempt; `show` changes the screen only while it is still the one followed. */
+  const follow = () => {
+    const mine = ++attempt.current;
+    const following = () => attempt.current === mine;
+    return { following, show: (p: Phase) => void (following() && setPhase(p)) };
+  };
+
+  const stopWaiting = () => {
+    attempt.current++;
+    setPhase("form");
+    setError(STOPPED_WAITING);
+  };
 
   // Focus follows a change of side or asset, not the first render: on the
   // Trade page the form is part of the page and must not steal the scroll.
@@ -200,17 +221,26 @@ export function TradeForm({
   };
 
   const sellFromBase = async (amount: bigint) => {
-    setPhase("wallet");
+    const { following, show } = follow();
+    show("preparing");
     setError(null);
     try {
-      await ensureWalletOn("base");
-      const b = await readBridgeSide("base", symbol, account);
-      if (!b) throw new Error("This token is not deployed on Base Sepolia.");
       const call = sellOnArrival(account);
-      const [fee, head] = await Promise.all([
-        bridgeFee("base", EXCHANGE_ADDRESS, b.token, amount, call),
-        destinationHead("sepolia"),
-      ]);
+      const { b, fee, head } = await withTimeout(
+        (async () => {
+          const b = await readBridgeSide("base", symbol, account);
+          if (!b) throw new Error("This token is not deployed on Base Sepolia.");
+          const [fee, head] = await Promise.all([
+            bridgeFee("base", EXCHANGE_ADDRESS, b.token, amount, call),
+            destinationHead("sepolia"),
+          ]);
+          return { b, fee, head };
+        })(),
+        READ_TIMEOUT_MS,
+        "Could not reach the network to prepare this. Nothing was sent — try again.",
+      );
+      show("wallet");
+      await ensureWalletOn("base");
       const hash = await writeWithApproval({
         account,
         spender: CCIP_CHAINS.base.router,
@@ -220,8 +250,10 @@ export function TradeForm({
         call: ccipSendCall("base", EXCHANGE_ADDRESS, b.token, amount, fee, call),
         label: "CCIP sale",
         network: BASE_NETWORK,
-        onApproving: () => setPhase("approving"),
-        onSubmitted: () => setPhase("confirming"),
+        onApproving: () => show("approving"),
+        onApprovalSent: () => show("confirming"),
+        onSigning: () => show("wallet"),
+        onSubmitted: () => show("confirming"),
       });
       recordTransfer(account, {
         hash,
@@ -234,10 +266,13 @@ export function TradeForm({
         scannedTo: head.toString(),
         kind: "sell",
       });
-      setPlaced({ side: "sell", text: `${formatUnitsShort(amount)} ${symbol}`, ccipHash: hash });
-      setPhase("done");
+      if (following()) {
+        setPlaced({ side: "sell", text: `${formatUnitsShort(amount)} ${symbol}`, ccipHash: hash });
+        setPhase("done");
+      }
       await onDone();
     } catch (e) {
+      if (!following()) return;
       const msg = e instanceof Error ? e.message : String(e);
       setError(/insufficient funds/i.test(msg) ? "Not enough Base Sepolia ETH for gas and the CCIP fee." : exchangeError(e));
       setPhase("form");
@@ -249,9 +284,12 @@ export function TradeForm({
   const place = async () => {
     if (!valid || amount === null) return;
     if (fromBase) return sellFromBase(amount);
-    setPhase("wallet");
+    const { following, show } = follow();
+    show("wallet");
     setError(null);
     try {
+      // The wallet can be left on Base by a sale or a transfer from there.
+      await ensureWalletOn("sepolia");
       await writeWithApproval({
         account,
         spender: EXCHANGE_ADDRESS,
@@ -260,13 +298,18 @@ export function TradeForm({
           ? { allowance: usdc.allowance, call: placeBuyCall(asset.id, amount) }
           : { allowance: asset.allowance, token: asset.token, call: placeSellCall(asset.id, amount) }),
         label: "Order",
-        onApproving: () => setPhase("approving"),
-        onSubmitted: () => setPhase("confirming"),
+        onApproving: () => show("approving"),
+        onApprovalSent: () => show("confirming"),
+        onSigning: () => show("wallet"),
+        onSubmitted: () => show("confirming"),
       });
-      setPlaced({ side, text: buying ? formatToken(amount) : `${formatUnitsShort(amount)} ${symbol}` });
-      setPhase("done");
+      if (following()) {
+        setPlaced({ side, text: buying ? formatToken(amount) : `${formatUnitsShort(amount)} ${symbol}` });
+        setPhase("done");
+      }
       await onDone();
     } catch (e) {
+      if (!following()) return;
       setError(exchangeError(e));
       setPhase("form");
     }
@@ -281,7 +324,7 @@ export function TradeForm({
           {phase === "done" ? (placed?.ccipHash ? "Sale on its way" : "Order placed") : buying ? `Buy ${symbol}` : `Sell ${symbol}`}
         </div>
         {onClose && (
-          <button className="modal-close" aria-label="Close" onClick={onClose} disabled={signing}>
+          <button className="modal-close" aria-label="Close" onClick={onClose}>
             ×
           </button>
         )}
@@ -488,9 +531,12 @@ export function TradeForm({
           )}
           {!asset.active && <div style={{ color: "var(--color-negative)", fontSize: 13 }}>This asset is not taking new orders.</div>}
           {error && <div style={{ color: "var(--color-negative)", fontSize: 13 }}>{error}</div>}
+          {signing && stalled && <WalletStalled onStop={stopWaiting} />}
 
           <button className="btn btn-accent bridge-submit" disabled={!valid || busy} onClick={() => void place()}>
-            {phase === "approving"
+            {phase === "preparing"
+              ? "Preparing…"
+              : phase === "approving"
               ? "Approve in your wallet…"
               : phase === "wallet"
                 ? "Confirm in your wallet…"

@@ -1980,6 +1980,21 @@ input:focus {
   cursor: pointer;
   font: inherit;
 }
+.wallet-stalled {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.4;
+  background: color-mix(in srgb, #e8c98c 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #e8c98c 40%, transparent);
+}
+.wallet-stalled .btn {
+  align-self: flex-start;
+}
+
 .lp-heading {
   font-size: 12px;
   font-weight: 500;

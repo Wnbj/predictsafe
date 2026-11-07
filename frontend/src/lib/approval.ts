@@ -3,6 +3,7 @@ import { approveCall, SEPOLIA_NETWORK, waitForTx, walletClientOn, type ContractC
 import { TOKEN_ADDRESS, TOKEN_DECIMALS, TOKEN_SYMBOL } from "./config";
 import { getActiveProvider } from "./providers";
 import { dismissToast, showToast } from "./toasts";
+import { withTimeout } from "./waiting";
 
 /**
  * A write that spends mUSDC, with the approval it needs — in ONE confirmation
@@ -32,6 +33,14 @@ const batchSupport = new Map<string, boolean>();
 
 const hexId = (id: number) => `0x${id.toString(16)}`;
 
+const CAPABILITIES_TIMEOUT_MS = 5_000;
+const NO_ANSWER = "The wallet did not answer";
+
+/** A batch's status read can fail once or twice without the batch having failed. */
+const STATUS_READ_FAILURES_ALLOWED = 5;
+
+const CHECK_THE_WALLET = "Check your wallet's activity before sending again: it may still go through.";
+
 /** Whether the connected wallet will run several calls as one, atomically, on `chainId`. */
 export async function canBatch(account: Address, chainId: number = SEPOLIA_NETWORK.chain.id): Promise<boolean> {
   const CHAIN_HEX = hexId(chainId);
@@ -42,16 +51,23 @@ export async function canBatch(account: Address, chainId: number = SEPOLIA_NETWO
   let ok = false;
   if (provider) {
     try {
-      const caps = (await provider.request({
-        method: "wallet_getCapabilities",
-        params: [account, [CHAIN_HEX]],
-      } as never)) as Capabilities;
+      // A wallet that does not answer this must not hold up the transaction:
+      // it is a question, not a signature, and the answer is not remembered.
+      const caps = (await withTimeout(
+        provider.request({
+          method: "wallet_getCapabilities",
+          params: [account, [CHAIN_HEX]],
+        } as never) as Promise<unknown>,
+        CAPABILITIES_TIMEOUT_MS,
+        NO_ANSWER,
+      )) as Capabilities;
       const c = caps?.[CHAIN_HEX] ?? caps?.[String(chainId)];
       // "ready" means the wallet can upgrade the account to batch on the spot
       // and will ask the user itself; "supported" means it already can. The
       // atomicBatch shape is the draft MetaMask shipped first.
       ok = c?.atomic?.status === "supported" || c?.atomic?.status === "ready" || c?.atomicBatch?.supported === true;
-    } catch {
+    } catch (e) {
+      if (e instanceof Error && e.message === NO_ANSWER) return false;
       ok = false;
     }
   }
@@ -70,11 +86,19 @@ async function waitForBatch(id: string): Promise<`0x${string}`> {
   const provider = getActiveProvider();
   if (!provider) throw new Error("No wallet connected");
   const deadline = Date.now() + 5 * 60_000;
+  let readFailures = 0;
   for (;;) {
-    const s = (await provider.request({ method: "wallet_getCallsStatus", params: [id] } as never)) as {
-      status: number | string;
-      receipts?: { transactionHash: `0x${string}`; status?: string }[];
-    };
+    let s: { status: number | string; receipts?: { transactionHash: `0x${string}`; status?: string }[] };
+    try {
+      s = (await provider.request({ method: "wallet_getCallsStatus", params: [id] } as never)) as typeof s;
+      readFailures = 0;
+    } catch {
+      // The batch is already with the wallet, so a failed status read says
+      // nothing about it. Giving up here would report a send that may land.
+      if (++readFailures > STATUS_READ_FAILURES_ALLOWED) throw new Error(`Lost track of the transaction. ${CHECK_THE_WALLET}`);
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
     const done = s.status === 200 || s.status === "CONFIRMED";
     const failed = typeof s.status === "number" && s.status >= 400;
     if (failed) throw new Error("The wallet reports the batch failed.");
@@ -83,7 +107,7 @@ async function waitForBatch(id: string): Promise<`0x${string}`> {
       if (!last) throw new Error("The batch confirmed without a transaction hash.");
       return last;
     }
-    if (Date.now() > deadline) throw new Error("No confirmation from the wallet after five minutes.");
+    if (Date.now() > deadline) throw new Error(`No confirmation after five minutes. ${CHECK_THE_WALLET}`);
     await new Promise((r) => setTimeout(r, 1500));
   }
 }
@@ -101,6 +125,10 @@ export interface ApprovedWrite {
   label: string;
   /** Called when a separate approval step starts, for a panel's busy state. */
   onApproving?: () => void;
+  /** The approval is signed and confirming: nothing is asked of the wallet until `onSigning`. */
+  onApprovalSent?: () => void;
+  /** The approval confirmed: the wallet is being asked for the call itself. */
+  onSigning?: () => void;
   /** The token being spent. Defaults to mUSDC. */
   token?: Address;
   /** The chain it all happens on. Defaults to Sepolia. */
@@ -167,7 +195,9 @@ export async function writeWithApproval(w: ApprovedWrite): Promise<`0x${string}`
   // an asset sold back, a bridge transfer — is approved for exactly the amount.
   const approval = token === TOKEN_ADDRESS && w.amount < ALLOWANCE_HEADROOM ? ALLOWANCE_HEADROOM : w.amount;
   const approveHash = await send(approveCall(w.spender, approval, token));
+  w.onApprovalSent?.();
   await waitForTx(approveHash, "Approval", network);
+  w.onSigning?.();
   const hash = await send(w.call);
   w.onSubmitted?.();
   await waitForTx(hash, w.label, network);

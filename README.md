@@ -418,7 +418,7 @@ export PATH="$HOME/.cre/bin:$HOME/.bun/bin:$HOME/.foundry/bin:$PATH"
 
 ```bash
 cd contracts && forge test                     # 257 tests
-cd frontend  && bun install && bun run test    # 251 tests
+cd frontend  && bun install && bun run test    # 257 tests
 cd frontend  && bun run lint                   # ESLint, clean
 cd frontend  && bun run dev                    # the app, against live Sepolia
 cd frontend  && bun run snapshot               # refresh shipped chain history

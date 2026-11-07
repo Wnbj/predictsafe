@@ -79,6 +79,18 @@ to three times with a ninety-second pause, because the free tier's limit
 recovers in about two minutes. A stale snapshot is never wrong, only slower:
 each 10,000 blocks behind costs a first visit two more requests.
 
+**Presenting full-screen hides the wallet.** A wallet request has no timeout:
+if MetaMask's window opens behind a full-screen browser, on another desktop, or
+is closed, the promise never settles and the page hears nothing. A CCIP transfer
+froze twice in a demo this way, or in a way that looks identical from here: the
+contracts were fine (approve + `ccipSend` passed on forks of both chains), the
+reads took 3.1 s on a cold browser, and neither attempt left a transaction on
+chain. Present with the browser windowed and the wallet unlocked, and do one
+small transfer beforehand. The dialogs no longer trap anyone: the × always
+works, and after 15 seconds of silence they say what is happening and offer
+*Stop waiting*. Stopping does not cancel the request in the wallet; confirming
+it afterwards still sends, and the transfer is still recorded.
+
 **Every open tab spends the same budget.** The live view polls every six
 seconds against the one key in `.env.local`. Close the ones you are not
 showing.
@@ -1828,7 +1840,7 @@ there is no event title on chain.
 | suite | count | command |
 |---|---|---|
 | contracts | 257 | `cd contracts && forge test` |
-| frontend | 251 | `cd frontend && bun run test` (and `bun run lint`) |
+| frontend | 257 | `cd frontend && bun run test` (and `bun run lint`) |
 | settlement workflow | 90 | `cd cre/settlement && bun test` |
 | confidential workflow | 8 | `cd cre/reserve-attestation && bun test` |
 

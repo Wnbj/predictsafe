@@ -108,6 +108,15 @@ caps `eth_getLogs` at 200 blocks); Sepolia still goes through the paced queue.
 `writeWithApproval` and `waitForTx` take a token and a `TxNetwork`, so the same
 one-prompt approval works for a bridge from either side.
 
+**Nothing may wait on a wallet for ever.** A request to the wallet has no
+timeout, and one whose window was closed never settles. `BridgeDialog` and
+`TradeForm` keep their exits open and show `WalletStalled` after 15 seconds of
+silence (`useStalled`); reads before the wallet is asked are bounded by
+`withTimeout` (`lib/waiting.ts`). Each send follows an `attempt`: a late answer
+to one the user stopped waiting for changes nothing on screen, but a transfer
+it completes is still recorded. Both also put the wallet on the right chain
+first, Sepolia included, since an earlier send can leave it on Base.
+
 ## Football
 
 `lib/sports.ts` and `readSportsMarkets` in `lib/chain.ts`. A football market is
