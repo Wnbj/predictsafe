@@ -80,9 +80,9 @@ recovers in about two minutes. A stale snapshot is never wrong, only slower:
 each 10,000 blocks behind costs a first visit two more requests.
 
 **A wallet request has no timeout.** If it never comes back, the page hears
-nothing. A CCIP transfer froze twice in a demo, with the browser full-screen:
-MetaMask's window appeared, then everything stopped. What is known: neither
-attempt left a transaction on chain, approve + `ccipSend` passed on forks of both
+nothing. A CCIP transfer froze twice in a demo, with the browser full-screen;
+whether MetaMask's window appeared at all is not remembered. What is known:
+neither attempt left a transaction on chain, approve + `ccipSend` passed on forks of both
 chains, and the reads took 3.1 s on a cold browser. What is NOT known is what
 stopped inside MetaMask. Present with the browser windowed and the wallet
 unlocked, and do one small transfer beforehand. The dialogs no longer trap
