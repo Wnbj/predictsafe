@@ -63,7 +63,19 @@ echo "Health over the last ${HOURS}h — Sepolia block $HEAD, $(date -u +%H:%MZ)
 echo
 echo "1. DON executions"
 for wf in predictsafe-settlement predictsafe-reserve; do
-  n=$(cre execution list "$wf" --status FAILURE --start "$SINCE" --limit 100 2>/dev/null | grep -c "Started:")
+  out=$(cre execution list "$wf" --status FAILURE --start "$SINCE" --limit 100 2>&1)
+  # An empty list and an unreadable one used to look the same — "0 failed".
+  # The CLI's login lapses (token refresh 403) and it still exits 0, so read
+  # what it said, not what it returned.
+  if grep -qiE "authentication|credential|not logged in|login" <<<"$out"; then
+    fail "$wf: cannot read executions — the CRE CLI is not logged in. Run: cre login"
+    continue
+  fi
+  if ! grep -qE "Executions|No executions|Started:" <<<"$out"; then
+    fail "$wf: cannot read executions — the CLI said: $(head -c 160 <<<"$out" | tr '\n' ' ')"
+    continue
+  fi
+  n=$(grep -c "Started:" <<<"$out")
   if [ "$n" -eq 0 ]; then ok "$wf: no failed executions"
   else warn "$wf: $n failed — read them with: cre execution list $wf --status FAILURE"; fi
 done

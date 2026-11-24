@@ -49,11 +49,25 @@ REFUSED (`ReportProcessed(result=false)` — the execution still reads SUCCESS);
 what the keeper considers due and markets stuck waiting for a report; when the
 confidential attestation last landed and its band; matches finished but not
 settled; exchange orders waiting. `./health.sh 2` looks at the last two hours.
+**The CRE CLI's login lapses** after a few weeks: every `cre` command then
+prints "credential validation failed … token refresh failed: 403" and still
+exits 0. Until 2026-11-24 `health.sh` read that as "no failed executions";
+it now marks it FAIL and says to run `cre login` (a browser sign-in).
 A WARN on failed executions is usually the platform's own RPC — "no healthy
 upstream" or "context canceled" on all ten nodes — and the next run catches up;
 a FAIL means a receiver refused something, or the attestation is late or below
 100%. It found nothing on 2026-10-21 that had not been noticed by hand — the
 point is that it no longer has to be.
+
+**2026-11-24, 15:32–16:45 UTC: an hour of DON-side failures.** 26 settlement
+and 2 attestation executions failed, every one at its first step —
+`HeaderByNumber` on Sepolia — with "context deadline exceeded", "request
+expired by executable client/server" or `CAPABILITY_NOT_FOUND` on all ten
+nodes: Chainlink's Sepolia read capability was unavailable, the same class as
+2026-10-05 and 2026-10-21. Nothing was written, so nothing on chain needed
+repair: no report was refused, no market was left stuck, and the next runs
+caught up from 16:50 (two attestation hours show as gaps on the Trade page).
+Two single failures at 10:25 and 10:42 the same morning were the same thing.
 
 **Then open something to trade.** Every market eventually resolves, and a
 board with nothing active has nothing to show. Markets → *+ Create market*
